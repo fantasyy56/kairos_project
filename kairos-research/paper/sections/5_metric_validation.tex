@@ -1,0 +1,48 @@
+% §5 Metric Validation (Model-Free)
+\label{sec:metric}
+
+This section validates the Causal Coherence Metric independently of any model training. All experiments in this section are model-free---no Transformer is used.
+
+\subsection{Experimental Setup}
+
+We use the DARPA Transparent Computing E3 (CADETS) dataset: 268,242 nodes, 29,727,441 edges over five days. Days 2--4 (April 2--4) serve as benign data for calibration. Day 6 (April 6) contains the ground-truth attack (nginx exploit chain). Ground-truth labels for attack nodes follow the MAGIC/ThreaTrace annotations. Parameter calibration is performed on days 2--3; day 4 is held out for benign evaluation.
+
+\subsection{Benign vs. Random Chain Discrimination}
+
+\textbf{Claim:} $\branchCoherence$ separates causally-coherent chains from randomly constructed chains with high discriminative power.
+
+\textbf{Setup.} We extract chains from 100 TGN seeds on day 4 (benign). Random chains are constructed by sampling random provenance edges as pseudo-seeds and performing undirected BFS without causal direction enforcement. For both sets, we compute $\branchCoherence$ without any model training.
+
+<!-- DATA_NEEDED: GAP_S5_BENIGN_RANDOM — AUC of Φ_bw classifying benign vs random chains, histogram figure -->
+
+\textbf{Expected.} $\branchCoherence$ achieves AUC $> 0.85$ in separating benign from random chains. Benign chains exhibit high coherence (genuine system causality), while random chains exhibit low coherence (events are not causally connected). This validates that the metric captures causal structure without any model training.
+
+\subsection{Elbow Detection Validation}
+
+\textbf{Claim:} The $\chainCoherence$ vs.~$\hoplimit$ curve exhibits a detectable elbow, and the elbow point produces optimal extraction.
+
+\textbf{Setup.} We extract chains from 100 benign TGN seeds. For each $\hoplimit \in \{1..10\}$, we re-extract chains from the same seeds and compute mean $\chainCoherence$. We identify $\hoplimit^*$ as the point of maximum negative second derivative.
+
+<!-- DATA_NEEDED: GAP_S5_ELBOW — Φ vs δ curve plot with elbow annotation, chain quality comparison at δ* vs δ=1 vs δ=10 -->
+
+\textbf{Expected.} A clear elbow emerges at $\hoplimit^* \approx 2$--$3$. Chains extracted at $\hoplimit^*$ are more complete than those at $\hoplimit=1$ (which miss causal context) and less noisy than those at $\hoplimit=10$ (which pull in unrelated events).
+
+\subsection{Attack Chain Case Study}
+
+\textbf{Claim:} Ground-truth attack chains exhibit high $\branchCoherence$, demonstrating that attacks obey operating system physics despite being semantically malicious.
+
+\textbf{Setup.} We extract chains from TGN seeds on day 6 (attack day). We inspect $\branchCoherence$ for chains that contain ground-truth attack nodes.
+
+<!-- DATA_NEEDED: GAP_S5_ATTACK — Table of Φ_bw scores for attack chains vs top benign chains -->
+
+\textbf{Expected.} Attack chains have $\branchCoherence$ comparable to benign chains. This confirms the separation of concerns: the coherence metric measures causal integrity (both attack and benign chains are causally coherent), while the Transformer's role is to identify semantic anomalies.
+
+\subsection{Comparison with Rule-Based Extraction}
+
+\textbf{Claim:} $\branchCoherence$ applied to rule-based extraction output (Holmes) yields lower scores than our causally-extracted chains.
+
+\textbf{Setup.} We apply Holmes-style rule-based forward/backward tracing from the same TGN seeds and compute $\branchCoherence$ for the resulting paths.
+
+<!-- DATA_NEEDED: GAP_S5_HOLMES — Table comparing Φ_bw(Ours) vs Φ_bw(Holmes) vs Φ_bw(Random) -->
+
+\textbf{Expected.} $\branchCoherence(\text{Ours}) > \branchCoherence(\text{Holmes}) > \branchCoherence(\text{Random})$, demonstrating that learned seed selection and causal-direction-respecting extraction produce tighter chains than rule-based alternatives.

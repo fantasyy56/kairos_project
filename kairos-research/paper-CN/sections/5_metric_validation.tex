@@ -1,0 +1,48 @@
+% §5 度量验证（模型无关）
+\label{sec:metric}
+
+本节在独立于任何模型训练的情况下验证因果相干性度量。本节中的所有实验都是模型无关的——不使用Transformer。
+
+\subsection{实验设置}
+
+我们使用DARPA透明计算E3（CADETS）数据集：268,242个节点，29,727,441条边，跨越五天。第2--4天（4月2--4日）作为校准用的良性数据。第6天（4月6日）包含真实攻击（nginx漏洞利用链）。攻击节点的真实标签遵循MAGIC/ThreaTrace标注。参数校准在第2--3天进行；第4天留出用于良性评估。
+
+\subsection{良性链与随机链判别}
+
+\textbf{声明：} $\branchCoherence$能以高判别力分离因果相干的链与随机构造的链。
+
+\textbf{设置。} 我们从第4天（良性）的100个TGN种子中提取链。随机链通过采样随机溯源边作为伪种子并进行无向BFS（不强制因果方向）来构造。对两组链，我们在没有任何模型训练的情况下计算$\branchCoherence$。
+
+<!-- DATA_NEEDED: GAP_S5_BENIGN_RANDOM — Φ_bw分类良性与随机链的AUC，直方图 -->
+
+\textbf{预期。} $\branchCoherence$在分离良性与随机链上达到AUC $> 0.85$。良性链展现出高相干性（真实的系统因果），而随机链展现出低相干性（事件没有因果连接）。这验证了度量在没有任何模型训练的情况下捕获了因果结构。
+
+\subsection{肘部检测验证}
+
+\textbf{声明：} $\chainCoherence$ vs.~$\hoplimit$曲线展现出可检测的肘部，且肘部点产生最优提取。
+
+\textbf{设置。} 我们从100个良性TGN种子中提取链。对每个$\hoplimit \in \{1..10\}$，从相同种子重新提取链并计算均值$\chainCoherence$。我们将$\hoplimit^*$识别为最大负二阶导数点。
+
+<!-- DATA_NEEDED: GAP_S5_ELBOW — Φ vs δ曲线图配肘部标注，δ*处与δ=1和δ=10的链质量对比 -->
+
+\textbf{预期。} 在$\hoplimit^* \approx 2$--$3$处出现清晰肘部。$\hoplimit^*$处提取的链比$\hoplimit=1$处（缺少因果上下文）更完整，比$\hoplimit=10$处（拉入无关事件）噪声更少。
+
+\subsection{攻击链案例研究}
+
+\textbf{声明：} 真实攻击链展现出高$\branchCoherence$，表明尽管攻击在语义上是恶意的，但遵守操作系统的物理规律。
+
+\textbf{设置。} 我们从第6天（攻击日）的TGN种子中提取链。检查包含真实攻击节点的链的$\branchCoherence$。
+
+<!-- DATA_NEEDED: GAP_S5_ATTACK — 攻击链与top良性链的Φ_bw分数对比表 -->
+
+\textbf{预期。} 攻击链具有与良性链可比的$\branchCoherence$。这确认了关注点分离：相干性度量衡量因果完整性（攻击链和良性链都是因果相干的），而Transformer的角色是识别语义异常。
+
+\subsection{与基于规则提取的对比}
+
+\textbf{声明：} 对基于规则提取输出（Holmes）应用$\branchCoherence$得到比我们因果提取的链更低的分数。
+
+\textbf{设置。} 我们从相同的TGN种子应用Holmes式的基于规则的前向/后向追踪，并计算结果路径的$\branchCoherence$。
+
+<!-- DATA_NEEDED: GAP_S5_HOLMES — Φ_bw(我们的) vs Φ_bw(Holmes) vs Φ_bw(随机)对比表 -->
+
+\textbf{预期。} $\branchCoherence(\text{我们的}) > \branchCoherence(\text{Holmes}) > \branchCoherence(\text{随机})$，表明学习的种子选择和尊重因果方向的提取能比基于规则的替代方法产生更紧凑的链。

@@ -1,0 +1,28 @@
+% §1 Introduction
+
+Advanced Persistent Threats (APTs) are not isolated events---they are causal chains. An attacker exploits a vulnerability in a web server, which spawns a shell, which downloads a payload, which reads credentials, which exfiltrates data to an external host. Each step \emph{causes} the next. For a security analyst investigating an alert, knowing \emph{which sequence of causally-connected events} constitutes the attack is more actionable than knowing which 15-minute time window or which individual file is suspicious.
+
+Provenance graphs, constructed from kernel-level audit logs, naturally capture these causal dependencies. Nodes represent system entities (processes, files, sockets), and directed edges represent causal system events (process fork, file write, network send) with precise timestamps. Because the kernel mediates all system interactions, provenance graphs provide a complete, tamper-resistant record of causal system activity.
+
+Despite operating on explicitly causal data structures, provenance-based intrusion detection systems (PIDS) have not realized the promise of causal chain detection:
+
+\begin{enumerate}
+\item \textbf{Coarse-granularity detection.} State-of-the-art PIDS detect at the level of time windows~\cite{cheng2024kairos}, individual entities~\cite{jia2024magic,wang2022threatrace}, graph snapshots~\cite{yang2023prographer}, or edges~\cite{edgetrace2025}. None identifies which specific sequence of causally-connected events constitutes the attack.
+\item \textbf{Heuristic chain extraction.} Recent Transformer-on-provenance methods segment provenance graphs using fixed time windows~\cite{eagleeye2024}, random walks~\cite{sentient2026}, or temporal subgraphs~\cite{getaid2025}. None respects causal edge direction---fixed windows group causally-unrelated events, random walks can traverse edges backward, and temporal subgraphs use time, not causality, as the organizing principle.
+\item \textbf{Post-hoc reconstruction.} Methods that produce attack paths do so as a post-processing step after node/edge-level detection~\cite{slot2025,cage2025}. Chain quality is fundamentally bounded by upstream detection recall---one missed node breaks the chain.
+\end{enumerate}
+
+A deeper issue underlies all of these limitations: \textbf{no existing method defines what makes a chain ``causally good'' before extracting it.} Existing approaches treat chain extraction as a segmentation problem---how to cut a large graph into smaller pieces---and rely on downstream model performance to indirectly validate the segmentation quality.
+
+\textbf{Our approach.} We reformulate chain extraction as a \emph{measurement} problem. We propose a model-free metric that directly quantifies the causal structural integrity of any event chain extracted from a provenance graph, and a calibration protocol that discovers the metric's parameters from benign data alone.
+
+Specifically, we make the following contributions:
+
+\begin{enumerate}
+\item \textbf{Causal Coherence Metric ($\branchCoherence$).} A model-free metric grounded in operating system principles: processes are exclusive capabilities (process identity is guaranteed by the kernel), while files and sockets are shared resources (subject to modification by third parties). The metric employs a 3-case pairwise coherence function and a structural sparsity prior that penalizes high-branching benign processes.
+\item \textbf{Unsupervised calibration protocol.} An elbow-detection method that discovers the natural causal horizon of an operating system from benign provenance data, requiring zero attack labels and zero manual parameter tuning. The protocol is cross-platform: it automatically adapts to different audit log granularities across operating systems.
+\item \textbf{End-to-end detection system.} A pipeline combining a TGN-based seed identifier (reused from KAIROS), the causal chain extractor guided by $\branchCoherence$, and a self-supervised autoregressive Transformer that discriminates attack chains from benign chains by learning to predict event transitions. The Transformer is trained exclusively on benign data.
+\item \textbf{Empirical validation.} On the DARPA Transparent Computing benchmark, causal chains achieve [X]\% chain-level F1, outperforming window-based, random-walk-based, subgraph-based, and rule-based chain extraction by over 10\% absolute F1, while reducing investigation cost by more than 50$\times$ compared to KAIROS. The calibration protocol discovers distinct causal horizons across datasets (E3 and E5), demonstrating automatic cross-platform adaptation.
+\end{enumerate}
+
+The remainder of this paper is organized as follows. \S\ref{sec:background} provides background on provenance graphs and analyzes the limitations of existing chain extraction strategies. \S\ref{sec:related} positions our work within the broader provenance-based intrusion detection literature. \S\ref{sec:design} presents the system design, with detailed treatment of the causal chain extractor, the coherence metric, and the autoregressive Transformer. \S\ref{sec:metric} validates the coherence metric independently of any model training. \S\ref{sec:evaluation} presents end-to-end detection results. \S\ref{sec:discussion} discusses deployment considerations and limitations. \S\ref{sec:conclusion} concludes.

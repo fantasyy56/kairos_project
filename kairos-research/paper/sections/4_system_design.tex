@@ -1,0 +1,189 @@
+% §4 System Design
+\label{sec:design}
+
+\subsection{Overview}
+
+Figure~\ref{fig:architecture} illustrates the system architecture. The pipeline consists of an offline phase (run once per deployment) and an online phase (run per test day).
+
+In the offline phase, we (1) compute per-node properties (Node Profiler) from the full provenance graph, (2) pretrain the TGN for edge type prediction on benign data (reused from KAIROS), (3) calibrate the Causal Coherence Metric parameters via elbow detection on benign chains, and (4) train the autoregressive Transformer on benign chains only.
+
+In the online phase, for a test day: (1) the TGN processes events sequentially, maintaining temporal memory state, and outputs a reconstruction loss per edge; (2) edges whose loss exceeds a threshold (95th percentile of benign loss) trigger causal chain extraction; (3) the Chain Extractor performs bidirectional causal tracing, prunes branches via $\branchCoherence$, and outputs candidate chains; (4) the autoregressive Transformer computes per-event reconstruction losses and maps them to anomaly percentiles via pre-computed eCDFs; (5) chains with high anomaly scores are flagged, and overlapping high-score chains are merged into complete attack paths.
+
+\subsection{Node Profiler: Global Graph Context}
+
+We precompute five node-level properties from the full provenance graph and concatenate them with KAIROS's existing 16-dimensional hierarchical path hash (node2higvec), producing a 21-dimensional node representation.
+
+\begin{enumerate}
+\item \textbf{Inverse Document Frequency (IDF).} $\text{IDF}(v) = \log(T / (t_v + 1))$, where $T$ is the number of time windows and $t_v$ is the number of windows containing node $v$. Higher IDF indicates rarer nodes.
+\item \textbf{Path Sensitivity.} Binary indicator: whether the node's path contains security-sensitive keywords (\texttt{/etc/passwd}, \texttt{/etc/shadow}, \texttt{authorized\_keys}, \texttt{/root/}, etc.).
+\item \textbf{Degree Anomaly.} $|\text{deg}(v) - \mu_{\text{deg}}(\text{type}(v))| / \sigma_{\text{deg}}(\text{type}(v))$, measuring how unusual the node's connectivity is relative to its type.
+\item \textbf{Bridge Centrality.} Normalized betweenness centrality, capturing the node's role as a structural bridge in the provenance graph.
+\item \textbf{Community ID.} Louvain community assignment on the undirected provenance graph, providing coarse functional grouping.
+\end{enumerate}
+
+Node Profiler is feature engineering, not a claimed contribution. No existing Transformer-on-provenance method (EagleEye, Sentient, GET-AID) systematically injects global graph statistics into token features.
+
+\subsection{TGN Seed Identification}
+
+We reuse KAIROS's pretrained Temporal Graph Network (TGN), which consists of a GraphAttentionEmbedding module (2-layer TransformerConv, 8 heads), a TGNMemory module with IdentityMessage and LastAggregator, and a LinkPredictor MLP. The TGN is trained on benign days (D2-D4) to predict the event type of each provenance edge given its source and destination node states.
+
+At inference, the TGN processes events sequentially, updating node memory states after each event. For each edge $e = (u \rightarrow v, t, \tau)$, it outputs a reconstruction loss $\mathcal{L}_{\text{TGN}}(e)$ measuring how well the model predicts the edge type $\tau$. Edges where $\mathcal{L}_{\text{TGN}}(e)$ exceeds the 95th percentile of the benign loss distribution are designated as \emph{seeds} for chain extraction.
+
+The TGN's temporal memory is critical: node states evolve as the system runs, so the model learns that a fork from \texttt{nginx} is less common than a fork from \texttt{bash}, and that certain event type transitions are anomalous for specific nodes. Static features cannot capture this temporal context.
+
+\subsection{Causal Chain Extractor}
+
+Given a seed edge $s = (u_0 \rightarrow v_0, t_0, \tau_0)$ and the provenance graph $\graph$, the Chain Extractor performs bidirectional causal tracing to construct candidate chains.
+
+\subsubsection{Extraction Algorithm}
+
+Algorithm~\ref{alg:extract} presents the extraction procedure. The algorithm maintains a set of candidate chains, initially containing only the seed. It alternates between backward tracing (what caused the seed?) and forward tracing (what did the seed cause?), extending chains at each step.
+
+\begin{algorithm}[t]
+\caption{Causal Chain Extraction}
+\label{alg:extract}
+\begin{algorithmic}[1]
+\Require Provenance graph $\graph$, seed edge $s$, parameters $\hoplimit^*, \timedecay^*, \branchpenalty^*, B=20$
+\Ensure Set of candidate chains with $\branchCoherence$ scores
+\State $\text{chains} \gets \{ [s] \}$
+\State $\text{current} \gets \{ s \}$
+\For{$\text{direction} \in \{\text{backward}, \text{forward}\}$}
+  \For{$\text{depth} = 1, 2, \dots$}
+    \State $\text{next} \gets \emptyset$
+    \For{each $(u \rightarrow v) \in \text{current}$}
+      \If{$\text{direction} = \text{backward}$}
+        \State $\text{next} \gets \text{next} \cup \textsc{IncomingCausal}(\graph, u, \hoplimit^*)$
+      \Else
+        \State $\text{next} \gets \text{next} \cup \textsc{OutgoingCausal}(\graph, v, \hoplimit^*)$
+      \EndIf
+    \EndFor
+    \If{$\text{next} = \emptyset$} \State \textbf{break} \Comment{Causal boundary reached}
+    \EndIf
+    \State $\text{chains} \gets \textsc{BranchExtend}(\text{chains}, \text{next}, \text{direction})$
+    \If{$|\text{chains}| > B$}
+      \State $\text{chains} \gets \textsc{PruneByCoherence}(\text{chains}, B, \branchCoherence)$
+    \EndIf
+    \State $\text{current} \gets \text{next}$
+  \EndFor
+\EndFor
+\State \Return $\text{chains}$
+\end{algorithmic}
+\end{algorithm}
+
+\textsc{IncomingCausal} and \textsc{OutgoingCausal} perform BFS along directed provenance edges within $\hoplimit^*$ hops, filtering to event types that represent causal influence (EXEC, FORK, WRITE, SENDTO) and excluding consequence-only types (READ, CLOSE). \textsc{BranchExtend} creates the Cartesian product of existing chains with new edges, preserving temporal ordering. \textsc{PruneByCoherence} retains the top-$B$ chains ranked by $\branchCoherence$.
+
+\subsubsection{Causal Coherence Metric}
+
+The metric quantifies the causal structural integrity of an event chain. It is model-free---computable directly from the provenance graph topology and timestamps without any trained model.
+
+\textbf{Pairwise coherence.} For consecutive events $e_i, e_{i+1}$ in a chain, let $\graphdist_i$ be the shortest directed path length from $\text{dst}(e_i)$ to $\text{src}(e_{i+1})$ in $\graph$ ($\graphdist_i = \infty$ if no directed path exists), and $\timegap_i = t_{i+1} - t_i$.
+
+The pairwise coherence $\phiMetric(e_i, e_{i+1})$ distinguishes three cases based on the \emph{bridging node type}---the node that is simultaneously the destination of $e_i$ and the source of $e_{i+1}$ when $\graphdist_i = 0$:
+
+\begin{equation}
+\phiMetric(e_i, e_{i+1}) =
+\begin{cases}
+\exp(-\graphdecay^* \cdot \graphdist_i) & \text{if } \graphdist_i = 0 \land \text{type}(\text{dst}(e_i)) = \text{subject} \\[4pt]
+\exp(-\graphdecay^* \cdot \graphdist_i) \cdot \exp(-\timedecay^* \cdot \timegap_i) & \text{if } \graphdist_i = 0 \land \text{type}(\text{dst}(e_i)) \in \{\text{file}, \text{netflow}\} \\[4pt]
+\exp(-\graphdecay^* \cdot \graphdist_i) \cdot \exp(-\timedecay^* \cdot \timegap_i) & \text{if } 0 < \graphdist_i \leq \hoplimit^* \\
+0 & \text{if } \graphdist_i > \hoplimit^*
+\end{cases}
+\label{eq:phi}
+\end{equation}
+
+The three cases are grounded in operating system principles, not chosen arbitrarily:
+
+\begin{enumerate}
+\item \textbf{Identity-preserving bridge} ($\graphdist_i = 0$, node is a process). A process's PID and memory space are exclusive capabilities guaranteed by the kernel. The process forked by event $e_i$ is the exact same process that initiates event $e_{i+1}$. The causal relationship is absolute and independent of elapsed time. We set $\timedecay^* \approx 0$ (no temporal decay).
+
+\item \textbf{Stateful bridge} ($\graphdist_i = 0$, node is a file or socket). Files and sockets are shared resources. Between the write by $e_i$ and the read by $e_{i+1}$, a third party may have modified the resource, breaking the causal chain. Temporal proximity provides evidence of causality: the longer the gap, the less reliable the assumed causal relationship.
+
+\item \textbf{Indirect path} ($0 < \graphdist_i \leq \hoplimit^*$). Events are connected through intermediate nodes. The causal connection is probabilistic, and temporal decay applies.
+\end{enumerate}
+
+\textbf{Chain-level coherence.} The chain coherence $\chainCoherence(\chain)$ is the arithmetic mean of pairwise scores:
+
+\begin{equation}
+\chainCoherence(\chain) = \frac{1}{n-1} \sum_{i=1}^{n-1} \phiMetric(e_i, e_{i+1})
+\label{eq:chain_phi}
+\end{equation}
+
+We use the arithmetic mean rather than the geometric mean for robustness: a single missing audit log event (common in production systems) would drive a geometric mean to zero.
+
+\textbf{Branch-Weighted Coherence.} Normal operating system processes exhibit power-law branching: a Firefox process may write 50 files, while a compilation job spawns hundreds of children. Attack chains, in contrast, are structurally sparse---the nginx exploit chain in DARPA E3 has a branching factor of approximately 2.5. To exploit this structural difference, we introduce the \emph{Structural Sparsity Prior}:
+
+\begin{equation}
+\branchCoherence(\chain) = \chainCoherence(\chain) \cdot \exp(-\branchpenalty^* \cdot \branchfactor(\chain))
+\label{eq:phi_bw}
+\end{equation}
+
+where $\branchfactor(\chain)$ is the mean out-degree of non-terminal nodes in $\chain$ within the full provenance graph. The parameter $\branchpenalty^*$ is calibrated automatically from benign data.
+
+\subsubsection{Calibration Protocol}
+
+The metric parameters $\hoplimit^*, \timedecay^*, \graphdecay^*, \branchpenalty^*$ must be set without attack labels. We propose an elbow-detection protocol that discovers them from benign data.
+
+\begin{enumerate}
+\item Extract chains from $K$ benign TGN seeds using intentionally loose parameters ($\hoplimit=10$, $\timedecay=0.01$).
+\item For each $\hoplimit \in \{1, 2, \dots, 10\}$: re-extract chains from the \emph{same} seeds (varying only $\hoplimit$), compute mean $\chainCoherence$ over all extracted chains.
+\item Plot $\chainCoherence$ vs. $\hoplimit$. The curve initially rises (more hops capture genuine causality), then plateaus or declines (noise forced into chains). Select $\hoplimit^*$ at the elbow---the point of maximum negative second derivative.
+\item Fix $\hoplimit^*$; calibrate $\timedecay^*$ analogously via the elbow of $\chainCoherence$ vs.~maximum temporal gap $\tau$.
+\item Set $\graphdecay^* = 1/\hoplimit^*$, $\timedecay^* = 1/\tau^*$.
+\item Calibrate $\branchpenalty^*$ as the value such that the top 10\% most coherent benign chains have mean $\branchfactor$ below a specified quantile.
+\end{enumerate}
+
+The elbow is guaranteed to exist because operating systems have finite causal depth. As $\hoplimit$ increases, the extraction eventually connects all chains to \texttt{init} (PID 1) or core kernel threads, pulling in unrelated events and causing coherence to drop.
+
+This protocol is a core contribution: it requires zero attack labels, zero manual tuning, and automatically adapts to different OS configurations (Linux auditd vs.~Windows ETW produce different logging granularities and therefore different natural causal horizons).
+
+\subsection{Autoregressive Transformer}
+
+The extracted chains are validated by a self-supervised autoregressive Transformer. We emphasize that the Transformer is not the contribution---it serves as the measurement instrument for chain quality.
+
+\subsubsection{Why Autoregressive}
+
+We adopt autoregressive next-event prediction rather than masked event modeling (MLM/BERT). In provenance graphs, causality flows strictly forward in time. MLM allows the model to condition on future events when reconstructing a masked past event, violating the causal arrow. Autoregressive prediction---conditioning each event only on its causal predecessors---preserves the causal semantics of the provenance data.
+
+\subsubsection{Input Representation}
+
+Each event $e_i = (u \rightarrow v, t, \tau)$ is encoded as a 75-dimensional feature vector:
+
+\begin{itemize}
+\item \textbf{Source node features} (24 dims): node2higvec (16), node type one-hot (3), IDF (1), path sensitivity (1), degree anomaly (1), community ID (1), bridge centrality (1).
+\item \textbf{Edge features} (20 dims): edge type one-hot (7), sinusoidal time encoding of $\timegap_i$ (8), learned graph distance embedding of $\graphdist_i$ (4), bridge type flag (3), was-seed indicator (1).
+\item \textbf{Destination node features} (24 dims): same structure as source.
+\item \textbf{Structure markers} (3 dims): is-branch-point, is-merge-point, depth-from-seed.
+\end{itemize}
+
+A learnable \texttt{[BOS]} token initializes each sequence, ensuring the first event receives an anomaly score. The pairwise coherence score $\phiMetric$ is explicitly \emph{not} included as input---it is deterministically computable from $\timegap_i$, $\graphdist_i$, and the bridge type, and including it would enable the model to ``cheat'' by correlating prediction error with this single scalar rather than learning the semantic event patterns.
+
+The 75-dim raw feature is projected to $\mathbb{R}^{128}$ via a learned linear layer, then added to standard sinusoidal positional encoding before entering the Transformer.
+
+\subsubsection{Architecture and Training}
+
+We use a 3-layer Transformer Encoder (d\_model=128, 4 attention heads, d\_ff=512, dropout=0.1, $\approx$1.5M parameters). At each autoregressive step, given $[e_1, \dots, e_i]$, the model predicts $e_{i+1}$ via a multi-task prediction head:
+
+\begin{itemize}
+\item \textbf{Categorical}: edge type (7-class CE), source node type (3-class CE), destination node type (3-class CE).
+\item \textbf{Continuous}: source/destination node2higvec (cosine similarity loss), scalar node properties (MSE, normalized to $[0,1]$).
+\item \textbf{Temporal}: time gap bucket (10-class log-spaced CE: [0-1ms, 1-10ms, $\dots$, 1-24h, >24h]).
+\end{itemize}
+
+The total loss is the equal-weighted sum of all components. Cosine similarity is used for node embeddings because MSE on sparse hash vectors drives the model toward predicting all zeros; cosine similarity focuses on directional alignment in the semantic space. Time prediction uses log-spaced classification buckets because event inter-arrival times are heavy-tailed---a single MSE error on a 24-hour gap would produce a gradient that destabilizes training.
+
+Training uses only benign chains extracted from DARPA days 2--4. Chains of length $n < 3$ are discarded (single-event anomalies are the TGN's responsibility). Maximum sequence length is 64; overlong chains are truncated seed-centrically (events furthest from the seed in causal distance are dropped first). Training converges in under one GPU-hour.
+
+\subsection{Detection via Component-wise eCDF}
+
+At inference, the trained Transformer computes per-event prediction losses. To convert raw losses into anomaly scores, we use component-wise empirical cumulative distribution functions (eCDFs), calibrated on a held-out benign validation set:
+
+\begin{enumerate}
+\item For each loss component $k \in \{\text{cat}, \text{cont}, \text{time}\}$, collect the per-event loss distribution on benign validation chains.
+\item Build $\text{eCDF}_k$: raw loss $\mapsto$ percentile $\in [0, 1]$.
+\item For a test event: anomaly score $= \max(P_{\text{cat}}, P_{\text{cont}}, P_{\text{time}})$.
+\item Chain anomaly score $= \text{mean}_i (\text{event anomaly score}_i)$.
+\end{enumerate}
+
+We use the maximum over components rather than the sum because a temporally extreme but semantically normal event (e.g., a C2 beacon at an unusual interval) could be diluted in the sum. The maximum preserves the most sensitive anomaly dimension. The separation also enables interpretability: each alert can be tagged as triggered by a temporal, semantic, or structural anomaly.
+
+A chain is flagged as anomalous when its anomaly score exceeds the 99.9th percentile of the benign chain score distribution. Overlapping high-score chains that share nodes and are temporally proximate ($<60$s) are merged into complete attack paths.

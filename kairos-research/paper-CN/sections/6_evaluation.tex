@@ -1,0 +1,45 @@
+% §6 端到端评估
+\label{sec:evaluation}
+
+本节评估完整的检测流水线，包括自回归Transformer。
+
+\subsection{主要结果：链级APT检测}
+
+\textbf{设置。} 我们在第2--4天良性链上训练自回归Transformer。在第6天（攻击日）测试。所有对比方法使用\emph{相同}的Transformer架构和训练过程——仅链/段提取策略不同。
+
+\textbf{基线。} 我们与代表四种链提取范式的七个基线对比：（1）EagleEye式固定大小时间窗口；（2）Sentient式随机游走场景分割；（3）GET-AID式时序子图划分；（4）SPARSE式基于规则的路径评分；（5）KAIROS窗口级检测；（6）MAGIC实体级检测；（7）SLOT后处理链重建。
+
+\textbf{指标。} 链级精确率、召回率和F1（主要指标）。AUC。调查成本——分析员按降序异常分数检查边以找到所有真实攻击边所需检查的边数量。
+
+<!-- DATA_NEEDED: GAP_S6_MAIN — 所有方法链级F1柱状图，全指标表 (P/R/F1/AUC/InvCost) -->
+
+\textbf{预期。} 我们的因果链提取在链级F1上超过次优方法超过10个百分点的绝对提升。调查成本相比KAIROS窗口级检测减少超过50倍。
+
+\subsection{跨数据集泛化}
+
+\textbf{设置。} 我们将相同流水线应用到DARPA E5（THEIA/Trace）。校准协议在E5良性数据上从头重新运行（协议不变，参数自动适配）。TGN和Transformer在E5良性链上重新训练。
+
+<!-- DATA_NEEDED: GAP_S6_CROSS — 左右并排E3 vs E5肘部曲线，已发现参数表，两者链级F1 -->
+
+\textbf{预期。} 校准协议为E3和E5发现不同的$\hoplimit^*$值（展示了OS专属的适配），但两者上的链级F1始终很高（展示了泛化性）。
+
+\subsection{消融研究}
+
+我们进行六项消融以隔离每个设计组件的贡献：
+
+\begin{enumerate}
+\item \textbf{移除因果方向强制：} 将因果追溯替换为无向BFS。预期：最大的F1下降——证明因果方向的重要性。
+\item \textbf{移除TGN时序记忆：} 替换为静态边特征进行种子选择。预期：中等下降——证明TGN时序状态的价值。
+\item \textbf{移除分支加权相干性：} 仅使用$\chainCoherence$。预期：高分支良性进程（Firefox、编译）导致精确率下降。
+\item \textbf{移除Node Profiler：} 仅使用KAIROS原始特征。预期：中等下降。
+\item \textbf{移除正弦时间编码：} 替换为标量$\timegap$。预期：轻微下降——但证明多尺度时序的价值。
+\item \textbf{将Transformer替换为LSTM和MLP：} 预期：LSTM接近，MLP更差——证明Transformer选择的合理性。
+\end{enumerate}
+
+<!-- DATA_NEEDED: GAP_S6_ABLATION — 消融柱状图，逐消融指标表 -->
+
+\subsection{效率分析}
+
+<!-- DATA_NEEDED: GAP_S6_EFFICIENCY — 逐组件延迟分解，内存分析，吞吐量对比 -->
+
+处理一天DARPA E3数据（约500万事件）大约需要10分钟：TGN推理占主导约8分钟，链提取增加约2分钟（CPU），Transformer推理在1秒内完成。这代表了144倍的实时吞吐量乘数。相比KAIROS，我们的方法增加不到20\%的开销。

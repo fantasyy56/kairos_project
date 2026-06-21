@@ -1,0 +1,34 @@
+% §3 Related Work
+\label{sec:related}
+
+We organize related work by the detection granularity and the role of causality in the method.
+
+\paragraph{Provenance-Based Intrusion Detection.}
+
+Early provenance-based detectors operated at coarse granularities. UNICORN~\cite{unicorn2020} applies Weisfeiler-Lehman graph kernels and histogram sketching to classify entire provenance graphs, relying on an evolutionary model of system behavior. PROGRAPHER~\cite{yang2023prographer} partitions provenance into temporal snapshots, applies graph2vec for snapshot embedding, and uses TextRCNN for sequence-level anomaly detection. While PROGRAPHER incorporates temporal sequence modeling, it operates at the snapshot level---individual event causality within snapshots is lost.
+
+At finer granularities, MAGIC~\cite{jia2024magic} uses a Graph Masked Auto-Encoder (GMAE) to learn benign entity representations and detects anomalies via KNN density estimation. ThreaTrace~\cite{wang2022threatrace} applies GraphSAGE for node-level anomaly detection with type-specific models. FLASH~\cite{flash2024} combines Word2Vec semantic encoding with GNN contextual encoding for node-level detection. These methods identify \emph{which entities} are suspicious, but not \emph{how they are causally connected}---the analyst receives a list of suspicious nodes, not an attack narrative.
+
+KAIROS~\cite{cheng2024kairos} is the closest predecessor to our work. It uses a Temporal Graph Network (TGN) to compute per-edge reconstruction loss, then applies statistical thresholding within 15-minute windows to identify anomalous time periods. We reuse KAIROS's TGN for seed identification but fundamentally differ in detection granularity: KAIROS outputs anomalous time windows, while we output specific causal event chains. Furthermore, KAIROS's detection mechanism is non-learned (1.5$\sigma$ threshold + IDF filtering + keyword blacklists), whereas our Transformer provides learned sequence-level discrimination.
+
+\paragraph{Transformers on Provenance Graphs.}
+
+A recent wave of work applies Transformer architectures to provenance data. EagleEye~\cite{eagleeye2024} linearizes provenance events into fixed-size windows and uses a BERT-tiny encoder for malware classification, demonstrating that self-attention can surface suspicious events for analyst review. Sentient~\cite{sentient2026} employs a Graph Transformer with Laplacian positional encoding and an Intent Analysis Module based on Mamba-2 for behavioral logic association. GET-AID~\cite{getaid2025} proposes a two-stage graph encoder with node-level and event-level TransformerConv attention across temporal subgraphs. PanThreat~\cite{panthreat2025} and LogShield~\cite{logshield2024} similarly apply Transformer variants to provenance or log sequences.
+
+Our work differs from this line in one fundamental aspect: we do not claim novelty in the Transformer architecture. Our contribution is the \emph{extraction metric} that determines what the Transformer processes. We demonstrate through ablation that causally-extracted chains consistently outperform chains from window-based, random-walk-based, or subgraph-based segmentation---regardless of the downstream model architecture.
+
+\paragraph{Attack Investigation and Path Reconstruction.}
+
+Rule-based attack investigation systems---Holmes~\cite{holmes2019}, Poirot~\cite{poirot2019}, and SLEUTH---use expert-defined attack patterns to trace causal paths through provenance graphs. While effective for known attack patterns, they cannot generalize to novel attacks. SPARSE~\cite{sparse2024} constructs Suspicious Semantic Graphs and performs path-level analysis using semantic tags and threat intelligence---a hybrid of rule-based and learned approaches.
+
+Recent ML-based methods perform path reconstruction as post-processing. SLOT~\cite{slot2025} uses graph reinforcement learning for anomaly detection, then applies label propagation clustering to construct attack chains. CAGE~\cite{cage2025} assigns dynamic causal weights to provenance edges via Q-learning and identifies attack paths through weighted subgraph extraction. EdgeTrace~\cite{edgetrace2025} uses a masked graph autoencoder for edge-level anomaly scoring, followed by semantic clustering for causal path inference.
+
+In all of these methods, chain construction is a \emph{downstream step} that depends on the quality of upstream detection. If the detector misses a critical node or edge, the chain is irrecoverably broken. Our method treats the chain itself as the detection unit: extraction and discrimination are jointly optimized, and weak individual signals can be amplified by the Transformer's self-attention over the full causal context.
+
+\paragraph{Causal Modeling in Security.}
+
+FALCON~\cite{falcon2025} applies federated causal learning across heterogeneous audit logs, using bidirectional Transformers for cross-domain attack investigation. While FALCON shares our interest in causal provenance, its focus is on privacy-preserving cross-domain learning rather than chain-level detection granularity. More broadly, causal inference techniques have been applied to intrusion detection~\cite{causalids}, but primarily as a means of improving detection accuracy rather than as a framework for defining and measuring chain quality.
+
+\paragraph{Positioning Summary.}
+
+Our work occupies a previously empty position in the design space: \textbf{model-free causal chain quality measurement}. Existing methods either (1) detect at coarser granularities, (2) segment provenance without respecting causal direction, or (3) reconstruct chains as post-processing. We are the first to define what makes a chain causally coherent and to design an extraction algorithm that directly optimizes this definition.

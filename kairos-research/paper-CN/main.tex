@@ -1,0 +1,80 @@
+% ============================================================
+% XeLaTeX + acmart + 中文 兼容性修复 (必须在\documentclass之前)
+% ============================================================
+% 1. 阻止 fontenc 加载 (与XeLaTeX的fontspec冲突)
+\makeatletter
+\@namedef{ver@fontenc.sty}{}
+\makeatother
+
+% 2. 禁用microtype (与XeLaTeX+ctex冲突)
+\PassOptionsToPackage{activate=false}{microtype}
+
+% 3. 禁用inconsolata和 libertine (XeLaTeX用系统字体)
+\PassOptionsToPackage{type1}{inconsolata}
+% ============================================================
+
+\documentclass[sigconf]{acmart}
+
+% ---- 中文支持 ----
+% scheme=plain: 仅提供中文支持, 不改变文档类格式 (避免与acmart冲突)
+\usepackage[scheme=plain]{ctex}
+
+% ---- Packages ----
+% acmart已加载: amsmath, graphicx, hyperref
+% amsmath, amssymb, amsfonts 也已由acmart加载
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+% ---- 中文适配 ----
+\renewcommand{\abstractname}{摘要}
+\renewcommand{\keywordsname}{关键词}
+\renewcommand{\figurename}{图}
+\renewcommand{\tablename}{表}
+\renewcommand{\refname}{参考文献}
+\floatname{algorithm}{算法}
+\renewcommand{\algorithmicrequire}{\textbf{输入:}}
+\renewcommand{\algorithmicensure}{\textbf{输出:}}
+\renewcommand{\listalgorithmname}{算法列表}
+
+% ---- cleveref (最后加载) ----
+\usepackage{cleveref}
+\crefname{equation}{式}{式}
+\crefname{figure}{图}{图}
+\crefname{table}{表}{表}
+\crefname{section}{节}{节}
+\crefname{algorithm}{算法}{算法}
+
+% Math macros
+\input{math_commands}
+
+% ---- 文档信息 ----
+\title{基于因果边感知的时序链提取方法用于溯源图APT检测}
+
+\author{匿名作者}
+\affiliation{匿名机构}
+
+\begin{document}
+
+\maketitle
+
+\input{sections/0_abstract}
+\input{sections/1_introduction}
+\input{sections/2_background}
+\input{sections/3_related_work}
+\input{sections/4_system_design}
+\input{sections/5_metric_validation}
+\input{sections/6_evaluation}
+\input{sections/7_discussion}
+\input{sections/8_conclusion}
+
+% 致谢 (可选)
+% \begin{acks}
+% 感谢匿名评审者的宝贵意见。
+% \end{acks}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+
+\end{document}

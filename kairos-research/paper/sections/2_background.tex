@@ -1,0 +1,44 @@
+% §2 Background and Motivation
+\label{sec:background}
+
+\subsection{Provenance Graphs and APT Detection}
+
+A provenance graph $\graph = (V, E)$ is a directed graph constructed from kernel-level audit logs. Each node $v \in V$ represents a system entity (process, file, or network socket), and each directed edge $e = (u \rightarrow v, t, \tau) \in E$ represents a causal system event where entity $u$ affected entity $v$ at timestamp $t$ via event type $\tau \in \{\text{FORK}, \text{EXEC}, \text{READ}, \text{WRITE}, \text{SENDTO}, \text{RECVFROM}, \dots\}$.
+
+Provenance graphs have two properties that make them powerful for intrusion detection. First, they are \emph{complete}: because the kernel mediates all system interactions, every causal relationship between system entities is recorded. Second, they are \emph{tamper-resistant}: the adversary cannot modify kernel-level audit logs without kernel-level access---at which point the system is already fully compromised.
+
+The scale of provenance data presents a fundamental challenge. The DARPA Transparent Computing E3 dataset, a standard benchmark, contains 268,242 nodes and 29,727,441 edges recorded over five days. Extracting meaningful attack signals from this volume requires principled filtering.
+
+\subsection{The Detection Granularity Gap}
+
+Existing PIDS operate at progressively finer granularities, forming a spectrum:
+
+\begin{itemize}
+\item \textbf{Graph-level} (Unicorn~\cite{unicorn2020}): classifies entire provenance graphs as benign or malicious.
+\item \textbf{Snapshot-level} (PROGRAPHER~\cite{yang2023prographer}): partitions the graph into temporal snapshots and classifies each snapshot.
+\item \textbf{Window-level} (KAIROS~\cite{cheng2024kairos}): scores events within 15-minute time windows and flags windows with high anomaly density.
+\item \textbf{Entity-level} (MAGIC~\cite{jia2024magic}, ThreaTrace~\cite{wang2022threatrace}): scores individual system entities (processes, files) as benign or malicious.
+\item \textbf{Edge-level} (EdgeTrace~\cite{edgetrace2025}): scores individual provenance edges as anomalous.
+\end{itemize}
+
+Each level answers a progressively finer-grained question, but none answers the question that matters most for investigation: \textbf{``Which sequence of causally-connected events constitutes the attack?''} We term this \emph{chain-level} detection.
+
+\subsection{Limitations of Existing Chain Extraction}
+
+Recent work has begun applying Transformers to provenance graphs. While these methods represent important progress, their chain extraction strategies share a common limitation: they do not respect causal edge direction.
+
+\textbf{Fixed windows (EagleEye~\cite{eagleye2024}).} EagleEye segments the provenance graph into fixed-size time windows and linearizes events within each window into a sequence for Transformer classification. This approach has two flaws. First, a fixed window at time $T$ may contain events from unrelated processes that happen to co-occur---a Firefox page load and an SSH login may fall in the same window but share no causal relationship. Second, causally-connected events that span a window boundary are severed.
+
+\textbf{Random walks (Sentient~\cite{sentient2026}).} Sentient uses random walk-based scenario segmentation to extract subgraphs for its Graph Transformer. Random walks are inherently direction-agnostic: a walk may traverse a provenance edge in reverse, linking a process that reads a file to a process that wrote it without respecting the temporal order in which these events occurred.
+
+\textbf{Temporal subgraphs (GET-AID~\cite{getaid2025}).} GET-AID constructs temporal subgraphs based on event timestamp proximity. While timestamps provide a weak signal, temporal proximity does not imply causal connection: two events occurring at the same time may belong to entirely independent process trees.
+
+\textbf{Post-hoc reconstruction (SLOT~\cite{slot2025}, CAGE~\cite{cage2025}).} These methods first detect anomalous nodes or edges, then connect them into attack paths via clustering or causal weighting. The chain is an output of post-processing, not the detection unit itself. Critically, if the upstream detector misses a single critical node, the reconstructed chain is incomplete---and there is no mechanism to recover it.
+
+\textbf{Rule-based extraction (SPARSE~\cite{sparse2024}, Holmes~\cite{holmes2019}).} These methods use expert-defined rules and threat intelligence to score and extract paths. They cannot detect novel attacks whose patterns fall outside the predefined rule set.
+
+\subsection{The Missing Mechanism}
+
+All of the above methods share a fundamental approach: they first decide \emph{how to segment} the provenance graph (by time, by random walk, by rule), then rely on a downstream model to validate whether the segmentation was useful. No method first defines \emph{what properties make a chain causally coherent} and then extracts chains that satisfy those properties.
+
+This is the gap we fill. In \S\ref{sec:design}, we define a causal coherence metric that quantifies chain quality independent of any model, and design an extraction algorithm that maximizes this metric.

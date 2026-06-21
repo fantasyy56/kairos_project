@@ -1,0 +1,189 @@
+% §4 系统设计
+\label{sec:design}
+
+\subsection{概述}
+
+图~\ref{fig:architecture}展示了系统架构。流水线由离线阶段（每次部署运行一次）和在线阶段（每个测试日运行）组成。
+
+在离线阶段，我们（1）从完整溯源图计算逐节点属性（Node Profiler），（2）在良性数据上预训练TGN进行边类型预测（复用KAIROS），（3）通过良性链上的肘部检测校准因果相干性度量参数，（4）仅在良性链上训练自回归Transformer。
+
+在线阶段，对于测试日：（1）TGN顺序处理事件，维护时序记忆状态，对每条边输出重建损失；（2）损失超过阈值（良性损失95\%分位数）的边触发因果链提取；（3）链提取器执行双向因果追溯，通过$\branchCoherence$剪枝分支，输出候选链；（4）自回归Transformer计算逐事件重建损失，通过预先计算的eCDF映射为异常百分位数；（5）高异常分数的链被标记，共享节点且时间接近的高分链合并为完整的攻击路径。
+
+\subsection{Node Profiler：全局图上下文}
+
+我们从完整溯源图中预计算五个节点级属性，并将其与KAIROS已有的16维层次路径哈希（node2higvec）拼接，产生21维的节点表示。
+
+\begin{enumerate}
+\item \textbf{逆文档频率（IDF）。} $\text{IDF}(v) = \log(T / (t_v + 1))$，其中$T$是时间窗口数，$t_v$是包含节点$v$的窗口数。IDF越高表示节点越稀有。
+\item \textbf{路径敏感性。} 二值指示器：节点路径是否包含安全敏感关键词（\texttt{/etc/passwd}、\texttt{/etc/shadow}、\texttt{authorized\_keys}、\texttt{/root/}等）。
+\item \textbf{度异常。} $|\text{deg}(v) - \mu_{\text{deg}}(\text{type}(v))| / \sigma_{\text{deg}}(\text{type}(v))$，衡量节点连接模式相对于其类型的异常程度。
+\item \textbf{桥接中心性。} 归一化介数中心性，捕获节点在溯源图中作为结构桥梁的角色。
+\item \textbf{社区ID。} 在无向溯源图上的Louvain社区划分，提供粗粒度的功能分组。
+\end{enumerate}
+
+Node Profiler是特征工程，不声称贡献。已有的Transformer-on-provenance方法（EagleEye、Sentient、GET-AID）均未系统性地将全局图统计量注入token特征。
+
+\subsection{TGN种子识别}
+
+我们复用KAIROS预训练的时序图网络（TGN），包括GraphAttentionEmbedding模块（2层TransformerConv，8个注意力头）、使用IdentityMessage和LastAggregator的TGNMemory模块、以及LinkPredictor MLP。TGN在良性日（D2-D4）上训练，预测每条溯源边的类型。
+
+推理时，TGN按顺序处理事件，每个事件后更新节点记忆状态。对于每条边$e = (u \rightarrow v, t, \tau)$，输出重建损失$\mathcal{L}_{\text{TGN}}(e)$，衡量模型预测边类型$\tau$的准确性。$\mathcal{L}_{\text{TGN}}(e)$超过良性损失分布95\%分位数的边被指定为链提取的\emph{种子}。
+
+TGN的时序记忆至关重要：节点状态随系统运行而演化，因此模型学会区分\texttt{nginx}的fork比\texttt{bash}的fork更罕见，以及某些事件类型过渡对特定节点是异常的。静态特征无法捕获这种时序上下文。
+
+\subsection{因果链提取器}
+
+给定种子边$s = (u_0 \rightarrow v_0, t_0, \tau_0)$和溯源图$\graph$，链提取器执行双向因果追溯以构造候选链。
+
+\subsubsection{提取算法}
+
+算法~\ref{alg:extract}展示了提取过程。算法维护一个候选链集合，初始仅包含种子。它交替进行后向追溯（什么导致了种子？）和前向追溯（种子导致了什么？），每一步扩展链。
+
+\begin{algorithm}[t]
+\caption{因果链提取}
+\label{alg:extract}
+\begin{algorithmic}[1]
+\Require 溯源图 $\graph$，种子边 $s$，参数 $\hoplimit^*, \timedecay^*, \branchpenalty^*, B=20$
+\Ensure 带有 $\branchCoherence$ 分数的候选链集合
+\State $\text{chains} \gets \{ [s] \}$
+\State $\text{current} \gets \{ s \}$
+\For{$\text{direction} \in \{\text{backward}, \text{forward}\}$}
+  \For{$\text{depth} = 1, 2, \dots$}
+    \State $\text{next} \gets \emptyset$
+    \For{each $(u \rightarrow v) \in \text{current}$}
+      \If{$\text{direction} = \text{backward}$}
+        \State $\text{next} \gets \text{next} \cup \textsc{IncomingCausal}(\graph, u, \hoplimit^*)$
+      \Else
+        \State $\text{next} \gets \text{next} \cup \textsc{OutgoingCausal}(\graph, v, \hoplimit^*)$
+      \EndIf
+    \EndFor
+    \If{$\text{next} = \emptyset$} \State \textbf{break} \Comment{到达因果边界}
+    \EndIf
+    \State $\text{chains} \gets \textsc{BranchExtend}(\text{chains}, \text{next}, \text{direction})$
+    \If{$|\text{chains}| > B$}
+      \State $\text{chains} \gets \textsc{PruneByCoherence}(\text{chains}, B, \branchCoherence)$
+    \EndIf
+    \State $\text{current} \gets \text{next}$
+  \EndFor
+\EndFor
+\State \Return $\text{chains}$
+\end{algorithmic}
+\end{algorithm}
+
+\textsc{IncomingCausal}和\textsc{OutgoingCausal}在$\hoplimit^*$跳内沿有向溯源边执行BFS，过滤为表示因果影响的事件类型（EXEC、FORK、WRITE、SENDTO），排除仅表示后果的类型（READ、CLOSE）。\textsc{BranchExtend}创建已有链与新边的笛卡尔积，保持时序顺序。\textsc{PruneByCoherence}保留$\branchCoherence$排名前$B$的链。
+
+\subsubsection{因果相干性度量}
+
+该度量量化事件链的因果结构完整性。它是模型无关的——可直接从溯源图拓扑和时间戳计算，无需任何训练好的模型。
+
+\textbf{逐对相干性。} 对于链中连续事件$e_i, e_{i+1}$，令$\graphdist_i$为$\graph$中从$\text{dst}(e_i)$到$\text{src}(e_{i+1})$的最短有向路径长度（若无有向路径则$\graphdist_i = \infty$），$\timegap_i = t_{i+1} - t_i$。
+
+逐对相干性$\phiMetric(e_i, e_{i+1})$根据\emph{桥接节点类型}——当$\graphdist_i = 0$时，同时是$e_i$终点和$e_{i+1}$起点的节点——区分三种情况：
+
+\begin{equation}
+\phiMetric(e_i, e_{i+1}) =
+\begin{cases}
+\exp(-\graphdecay^* \cdot \graphdist_i) & \text{若 } \graphdist_i = 0 \land \text{type}(\text{dst}(e_i)) = \text{subject} \\[4pt]
+\exp(-\graphdecay^* \cdot \graphdist_i) \cdot \exp(-\timedecay^* \cdot \timegap_i) & \text{若 } \graphdist_i = 0 \land \text{type}(\text{dst}(e_i)) \in \{\text{file}, \text{netflow}\} \\[4pt]
+\exp(-\graphdecay^* \cdot \graphdist_i) \cdot \exp(-\timedecay^* \cdot \timegap_i) & \text{若 } 0 < \graphdist_i \leq \hoplimit^* \\
+0 & \text{若 } \graphdist_i > \hoplimit^*
+\end{cases}
+\label{eq:phi}
+\end{equation}
+
+这三种情况根植于操作系统原理，而非任意选择：
+
+\begin{enumerate}
+\item \textbf{身份保持桥接}（$\graphdist_i = 0$，节点为进程）。进程的PID和内存空间是内核保证的独占能力。被事件$e_i$派生的进程正是发起事件$e_{i+1}$的同一个进程。因果关系是绝对的，与经过的时间无关。我们设置$\timedecay^* \approx 0$（无时间衰减）。
+
+\item \textbf{有状态桥接}（$\graphdist_i = 0$，节点为文件或套接字）。文件和套接字是共享资源。在$e_i$的写入和$e_{i+1}$的读取之间，第三方可能已经修改了资源，打破了因果链。时间接近性提供了因果关系的证据：间隔越长，假定的因果关系越不可靠。
+
+\item \textbf{间接路径}（$0 < \graphdist_i \leq \hoplimit^*$）。事件通过中间节点连接。因果连接是概率性的，适用时间衰减。
+\end{enumerate}
+
+\textbf{链级相干性。} 链相干性$\chainCoherence(\chain)$是逐对分数的算术平均：
+
+\begin{equation}
+\chainCoherence(\chain) = \frac{1}{n-1} \sum_{i=1}^{n-1} \phiMetric(e_i, e_{i+1})
+\label{eq:chain_phi}
+\end{equation}
+
+我们使用算术平均而非几何平均是为了鲁棒性：单个缺失的审计日志事件（在生产系统中常见）会使几何平均归零。
+
+\textbf{分支加权相干性。} 正常操作系统进程呈现幂律分支：一个Firefox进程可能写入50个文件，而编译任务派生数百个子进程。攻击链则相反，在结构上是稀疏的——DARPA E3中的nginx漏洞利用链的分支因子约为2.5。为利用这一结构性差异，我们引入了\emph{结构稀疏先验}：
+
+\begin{equation}
+\branchCoherence(\chain) = \chainCoherence(\chain) \cdot \exp(-\branchpenalty^* \cdot \branchfactor(\chain))
+\label{eq:phi_bw}
+\end{equation}
+
+其中$\branchfactor(\chain)$是链中非终端节点在完整溯源图中的平均出度。参数$\branchpenalty^*$从良性数据自动校准。
+
+\subsubsection{校准协议}
+
+度量参数$\hoplimit^*, \timedecay^*, \graphdecay^*, \branchpenalty^*$必须在没有攻击标签的情况下设置。我们提出一个肘部检测协议，从良性数据中发现这些参数。
+
+\begin{enumerate}
+\item 使用故意宽松的参数（$\hoplimit=10$, $\timedecay=0.01$），从$K$个良性TGN种子中提取链。
+\item 对每个$\hoplimit \in \{1, 2, \dots, 10\}$：从\emph{相同}的种子重新提取链（仅变动$\hoplimit$），计算所有提取链的均值$\chainCoherence$。
+\item 绘制$\chainCoherence$ vs.~$\hoplimit$曲线。曲线初始上升（更多跳捕获真实因果），然后平台化或下降（噪声被强行拉入链中）。选择肘部的$\hoplimit^*$——最大负二阶导数处。
+\item 固定$\hoplimit^*$；通过$\chainCoherence$ vs.~最大时间间隔$\tau$的肘部类似地校准$\timedecay^*$。
+\item 设置$\graphdecay^* = 1/\hoplimit^*$, $\timedecay^* = 1/\tau^*$。
+\item 将$\branchpenalty^*$校准为使得前10\%最相干的良性链的均值$\branchfactor$低于指定分位数的值。
+\end{enumerate}
+
+肘部的存在是有保证的，因为操作系统具有有限的因果深度。随着$\hoplimit$增加，提取最终将所有链连接到\texttt{init}（PID 1）或核心内核线程，将无关事件拉入导致相干性下降。
+
+该协议是核心贡献：它零攻击标签、零人工调优，并自动适配不同OS配置（Linux auditd vs.~Windows ETW产生的日志粒度不同，因此自然因果视野也不同）。
+
+\subsection{自回归Transformer}
+
+提取的链由一个自监督的自回归Transformer进行验证。我们强调Transformer不是贡献——它作为链质量的测量工具。
+
+\subsubsection{为何自回归}
+
+我们采用自回归的next-event prediction，而非掩码事件建模（MLM/BERT）。在溯源图中，因果严格随时间向前流动。MLM允许模型在重建被掩码的过去事件时以前向的未来事件为条件——违背了因果箭头。自回归预测——每个事件仅以其因果前驱为条件——保留了溯源数据的因果语义。
+
+\subsubsection{输入表示}
+
+每个事件$e_i = (u \rightarrow v, t, \tau)$被编码为75维特征向量：
+
+\begin{itemize}
+\item \textbf{源节点特征}（24维）：node2higvec (16)，节点类型one-hot (3)，IDF (1)，路径敏感性 (1)，度异常 (1)，社区ID (1)，桥接中心性 (1)。
+\item \textbf{边特征}（20维）：边类型one-hot (7)，$\timegap_i$正弦时间编码 (8)，$\graphdist_i$的图距离学习嵌入 (4)，桥接类型标志 (3)，是否为种子 (1)。
+\item \textbf{目标节点特征}（24维）：与源节点相同结构。
+\item \textbf{结构标记}（3维）：是否为分支点，是否为汇聚点，距种子深度。
+\end{itemize}
+
+一个可学习的\texttt{[BOS]}标记初始化每条序列，确保第一个事件也获得异常分数。逐对相干性分数$\phiMetric$明确\emph{不}包含在输入中——它由$\timegap_i$、$\graphdist_i$和桥接类型确定性确定，包含它会使模型能够“偷懒”，直接依赖这个标量而不学习事件语义模式。
+
+75维原始特征通过学习的线性层投影到$\mathbb{R}^{128}$，然后加上标准正弦位置编码后进入Transformer。
+
+\subsubsection{架构与训练}
+
+我们使用3层Transformer Encoder（d\_model=128，4个注意力头，d\_ff=512，dropout=0.1，约1.5M参数）。在每个自回归步骤中，给定$[e_1, \dots, e_i]$，模型通过多任务预测头预测$e_{i+1}$：
+
+\begin{itemize}
+\item \textbf{分类}：边类型（7类CE），源节点类型（3类CE），目标节点类型（3类CE）。
+\item \textbf{连续}：源/目标node2higvec（余弦相似度损失），标量节点属性（MSE，归一化到$[0,1]$）。
+\item \textbf{时序}：时间间隔桶（10类对数间隔CE：[0-1ms, 1-10ms, $\dots$, 1-24h, >24h]）。
+\end{itemize}
+
+总损失为所有分量的等权和。余弦相似度用于节点嵌入，因为稀疏哈希向量上的MSE会驱使模型预测全零；余弦相似度聚焦于语义空间的方向对齐。时间预测使用对数间隔的分类桶，因为事件到达间隔是重尾的——24小时间隔的单个MSE误差产生会破坏训练稳定性的梯度。
+
+训练仅使用从DARPA第2--4天提取的良性链。长度$n < 3$的链被丢弃（单事件异常是TGN的职责）。最大序列长度为64；过长链以种子为中心截断（因果距离离种子最远的事件先丢弃）。训练在一GPU小时内收敛。
+
+\subsection{基于分量eCDF的检测}
+
+推理时，训练好的Transformer计算逐事件预测损失。为将原始损失转换为异常分数，我们使用分量经验累积分布函数（eCDF），在留出的良性验证集上校准：
+
+\begin{enumerate}
+\item 对每个损失分量$k \in \{\text{cat}, \text{cont}, \text{time}\}$，在良性验证链上收集逐事件损失分布。
+\item 构建$\text{eCDF}_k$：原始损失 $\mapsto$ 百分位数 $\in [0, 1]$。
+\item 对于测试事件：异常分数 $= \max(P_{\text{cat}}, P_{\text{cont}}, P_{\text{time}})$。
+\item 链异常分数 $= \text{mean}_i (\text{事件异常分数}_i)$。
+\end{enumerate}
+
+我们使用分量上的最大值而非总和，因为时间上极端但语义正常的事件（如C2信标在异常间隔出现）可能在总和中被稀释。最大值保留了最敏感的异常维度。这种分离也实现了可解释性：每个告警可被标记为由时间异常、语义异常或结构异常触发。
+
+当链的异常分数超过良性链分数分布的99.9\%分位数时，该链被标记为异常。共享节点且时间接近（$<60$s）的重叠高分链合并为完整的攻击路径。

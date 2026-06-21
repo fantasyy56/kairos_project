@@ -1,0 +1,34 @@
+% §3 相关工作
+\label{sec:related}
+
+我们按检测粒度和因果性在方法中的角色来组织相关工作。
+
+\paragraph{基于溯源的入侵检测。}
+
+早期的基于溯源的检测器在粗粒度上运行。UNICORN~\cite{unicorn2020}应用Weisfeiler-Lehman图核和直方图草图将整个溯源图分类，依赖系统行为的演化模型。PROGRAPHER~\cite{yang2023prographer}将溯源划分为时序快照，应用graph2vec进行快照嵌入，并使用TextRCNN进行序列级异常检测。虽然PROGRAPHER引入了时序序列建模，但其在快照级别运行——快照内单个事件的因果关系被丢失。
+
+在更细粒度上，MAGIC~\cite{jia2024magic}使用图掩码自编码器（GMAE）学习良性实体表示并通过KNN密度估计检测异常。ThreaTrace~\cite{wang2022threatrace}应用GraphSAGE进行节点级异常检测并搭配类型专属模型。FLASH~\cite{flash2024}将Word2Vec语义编码与GNN上下文编码结合进行节点级检测。这些方法识别了\emph{哪些实体}可疑，但不识别\emph{它们如何因果相连}——分析员收到的是一份可疑节点列表，而非攻击叙事。
+
+KAIROS~\cite{cheng2024kairos}是我们工作最接近的前身。它使用时序图网络（TGN）计算逐边重建损失，然后在15分钟窗口内应用统计阈值来识别异常时间段。我们复用KAIROS的TGN进行种子识别，但在检测粒度上有根本区别：KAIROS输出异常时间窗口，而我们输出具体的因果事件链。此外，KAIROS的检测机制是非学习的（1.5$\sigma$阈值+IDF过滤+关键词黑名单），而我们的Transformer提供了学习的序列级判别。
+
+\paragraph{溯源图上的Transformer。}
+
+最近一波工作将Transformer架构应用于溯源数据。EagleEye~\cite{eagleeye2024}将溯源事件线性化到固定大小窗口中，使用BERT-tiny编码器进行恶意软件分类，展示了自注意力可以为分析员审查浮现可疑事件。Sentient~\cite{sentient2026}使用Graph Transformer配合拉普拉斯位置编码，以及基于Mamba-2的意图分析模块进行行为逻辑关联。GET-AID~\cite{getaid2025}提出了一个两阶段图编码器，在时序子图上使用节点级和事件级的TransformerConv注意力。PanThreat~\cite{panthreat2025}和LogShield~\cite{logshield2024}同样将Transformer变体应用于溯源或日志序列。
+
+我们的工作与这条线有一个根本区别：我们不声称Transformer架构的新颖性。我们的贡献是决定Transformer\emph{处理什么数据}的\emph{提取度量}。我们通过消融实验证明，因果提取的链始终优于来自基于窗口、基于随机游走或基于子图分割的链——无论下游模型架构如何。
+
+\paragraph{攻击调查与路径重建。}
+
+基于规则的攻击调查系统——Holmes~\cite{holmes2019}、Poirot~\cite{poirot2019}和SLEUTH——使用专家定义的攻击模式在溯源图中追踪因果路径。虽然对已知攻击模式有效，但无法泛化到新型攻击。SPARSE~\cite{sparse2024}构造可疑语义图，使用语义标签和威胁情报进行路径级分析——是规则基和学习方法的混合体。
+
+最近的基于ML的方法将路径重建作为后处理。SLOT~\cite{slot2025}使用图强化学习进行异常检测，然后应用标签传播聚类构造攻击链。CAGE~\cite{cage2025}通过Q-learning为溯源边分配动态因果权重，并通过加权子图提取识别攻击路径。EdgeTrace~\cite{edgetrace2025}使用掩码图自编码器进行边级异常评分，然后通过语义聚类进行因果路径推断。
+
+在所有这些方法中，链的构造是依赖上游检测质量的\emph{下游步骤}。如果检测器漏掉关键节点或边，链就不可恢复地断裂。我们的方法将链本身视为检测单元：提取和判别是联合优化的，弱个体信号可以通过Transformer在完整因果上下文上的自注意力被放大。
+
+\paragraph{安全中的因果建模。}
+
+FALCON~\cite{falcon2025}在异构审计日志上应用联邦因果学习，使用双向Transformer进行跨域攻击调查。虽然FALCON共享我们对因果溯源的兴趣，但其关注点是隐私保护的跨域学习，而非链级检测粒度。更广泛地，因果推断技术已被应用于入侵检测~\cite{causalids}，但主要是作为提高检测准确性的手段，而非作为定义和度量链质量的框架。
+
+\paragraph{定位总结。}
+
+我们的工作在设计空间中占据了一个此前空白的位点：\textbf{模型无关的因果链质量度量}。已有方法要么（1）在更粗粒度检测，（2）在不尊重因果方向的情况下分割溯源图，要么（3）将链重建作为后处理。我们是首个定义什么使链因果相干、并设计直接优化这一定义的提取算法的工作。

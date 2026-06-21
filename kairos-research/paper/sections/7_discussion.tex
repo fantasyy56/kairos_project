@@ -1,0 +1,22 @@
+% §7 Discussion
+\label{sec:discussion}
+
+\subsection{Deployment Model}
+
+Our system is designed as an \textbf{asynchronous out-of-band (OOB) detector}, not an inline real-time blocker. It operates on a 60-second tumbling window: events accumulate in a sliding graph buffer, the TGN processes them in contiguous GPU-friendly blocks, and chain extraction with Transformer inference is triggered lazily only when an edge exceeds the anomaly threshold. Detection latency is approximately 2 seconds after window close---negligible for APT campaigns that unfold over hours or days, and a deliberate trade-off for maximizing GPU throughput. The graph buffer is bounded by a configurable time window (default 15 minutes, matching KAIROS), ensuring memory stability regardless of system uptime.
+
+We evaluate in batch per-day mode to ensure apples-to-apples comparison with KAIROS, MAGIC, and other baselines that share this evaluation convention. The micro-batch streaming architecture is described here as a deployment consideration, not as an evaluated claim.
+
+\subsection{Limitations}
+
+\textbf{Single attack type in E3.} The DARPA E3 dataset contains one primary attack scenario (nginx exploit chain). While our E5 cross-dataset experiment provides additional attack diversity, both datasets originate from the same DARPA program. Evaluation on a broader range of APT campaigns (e.g., OpTC, or custom Caldera-based testbeds) is needed to establish generalizability.
+
+\textbf{Benign training assumption.} We assume the training data (days 2--4) is attack-free. This assumption is standard in provenance-based intrusion detection---KAIROS, MAGIC, and UNICORN all make it---but may not hold in all real-world deployments.
+
+\textbf{Structural Sparsity Prior.} The branch-weighted coherence penalty assumes attack chains are structurally sparse. While this holds for targeted APT campaigns (which typically maintain a narrow, linear attack footprint), it may not hold for ransomware or worm-style attacks that fan out to many processes. These attack types require different detection paradigms.
+
+\textbf{No formal theorem.} The existence of an elbow in the $\chainCoherence$ vs.~$\hoplimit$ curve is empirically demonstrated but not formally proven. A rigorous treatment using the causal structure of operating system process trees (bounded depth, convergence to PID 1) would strengthen the theoretical contribution.
+
+\subsection{Future Work}
+
+Extending the system to streaming evaluation with live audit log integration (eBPF or LSM hooks) is a natural next step. The causal coherence framework could also be formalized within Pearl's do-calculus, providing theoretical guarantees on chain recovery probability. Multi-host provenance integration would enable detection of cross-machine lateral movement chains.

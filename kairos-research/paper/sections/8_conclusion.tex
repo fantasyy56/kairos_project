@@ -1,0 +1,8 @@
+% §8 Conclusion
+\label{sec:conclusion}
+
+We presented the Causal Coherence Metric ($\branchCoherence$)---a model-free, operating-system-principle-grounded metric for quantifying the causal structural integrity of event chains extracted from provenance graphs---and an unsupervised calibration protocol that discovers the natural causal horizon of an operating system from benign data alone. The metric's 3-case pairwise coherence function distinguishes identity-preserving bridges (processes) from stateful bridges (files and sockets), grounded in the OS principle that processes are exclusive capabilities while files are shared resources. The calibration protocol uses elbow detection on benign chains to set all parameters without attack labels or manual tuning, and automatically adapts to different OS configurations.
+
+Chains extracted under $\branchCoherence$ guidance, validated by a self-supervised autoregressive Transformer trained solely on benign event sequences, achieve [X]\% chain-level F1 on DARPA E3---outperforming window-based, random-walk-based, subgraph-based, and post-hoc chain reconstruction methods by over 10\% absolute F1---while reducing investigation cost by more than 50$\times$ compared to the state-of-the-art window-level detector. The calibration protocol discovers distinct causal horizons across E3 and E5, demonstrating cross-platform automatic adaptation.
+
+By reformulating APT detection from ``where/when is the anomaly?'' to ``which causal sequence is the attack?,'' our method provides security analysts with directly actionable attack narratives rather than lists of suspicious entities or time windows.
