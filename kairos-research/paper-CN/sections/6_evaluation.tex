@@ -1,45 +1,53 @@
-% §6 端到端评估
+% 实验结果
+\section{实验结果}
 \label{sec:evaluation}
 
-本节评估完整的检测流水线，包括自回归Transformer。
+本节围绕四个研究问题报告结果：链一致性评分是否有效（RQ1）、链级检测是否提升 APT 调查效果（RQ2）、各组件贡献如何（RQ3）、以及方法是否具备泛化性和实用效率（RQ4）。
 
-\subsection{主要结果：链级APT检测}
+\subsection{RQ1：链一致性评分是否有效？}
+\label{sec:metric}
 
-\textbf{设置。} 我们在第2--4天良性链上训练自回归Transformer。在第6天（攻击日）测试。所有对比方法使用\emph{相同}的Transformer架构和训练过程——仅链/段提取策略不同。
+RQ1 只评估 $\branchCoherence$ 本身，不训练或使用序列模型。目标是确认它度量的是审计支撑的结构一致性，而不是图密度、时间接近或随机可达性。
 
-\textbf{基线。} 我们与代表四种链提取范式的七个基线对比：（1）EagleEye式固定大小时间窗口；（2）Sentient式随机游走场景分割；（3）GET-AID式时序子图划分；（4）SPARSE式基于规则的路径评分；（5）KAIROS窗口级检测；（6）MAGIC实体级检测；（7）SLOT后处理链重建。
+\paragraph{良性链与随机链区分。}我们从良性第 4 天的 100 个 TGN 种子提取链，并与无方向、无身份约束的随机 BFS 链比较。
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S5\_BENIGN\_RANDOM --- $\log\branchCoherence$ 区分良性 vs 随机链的 AUC 与直方图。 -->}\end{flushleft}
+预期上，良性链应具有更高 $\log\branchCoherence$，随机链因方向违反、身份不连续和长时间间隔而退化到 $\phi_{\min}$ 附近。
 
-\textbf{指标。} 链级精确率、召回率和F1（主要指标）。AUC。调查成本——分析员按降序异常分数检查边以找到所有真实攻击边所需检查的边数量。
+\paragraph{负控制验证。}我们构造四类扰动：时间打乱、方向反转、实体随机化、资源访问交错打乱。每类扰动都保留部分表面统计量，同时破坏一种审计支撑因子。
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S5\_NEGCTRL --- 四种扰动的 $\log\branchCoherence$ 中位数、IQR 与未扰动良性中位数差值。 -->}\end{flushleft}
+若四类扰动均显著降低一致性分数，则说明该评分确实依赖时间顺序、边方向、实体身份和资源存活语义。
 
-<!-- DATA_NEEDED: GAP_S6_MAIN — 所有方法链级F1柱状图，全指标表 (P/R/F1/AUC/InvCost) -->
+\paragraph{资源存活模型拟合。}对常规文件报告 Poisson 基线的 KS 统计量与 $\chi^2$ 拟合优度；若拟合失败，则使用良性数据上的 Kaplan--Meier 经验存活函数。对管道报告 FIFO 违反率；对套接字报告 send/recv 对落在同一连接生命期内的比例；对共享内存和模糊 IPC 仅报告出现频率，因为它们在审计模型之外。
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S5\_SURVIVAL --- 逐资源类拟合优度、边占比与模型外事件占比。 -->}\end{flushleft}
 
-\textbf{预期。} 我们的因果链提取在链级F1上超过次优方法超过10个百分点的绝对提升。调查成本相比KAIROS窗口级检测减少超过50倍。
+\paragraph{长寿命进程虚假链率与参数敏感性。}我们在良性第 4 天识别生命期超过 1 小时的 daemon，并在不同 $\Delta t$ 下采样进程内事件对，报告 $\phi_{\text{proc}}>0.5$ 的比例。同时报告 $\phi_{\min}$、$\tau_{\text{gap}}$ 和 $\beta_p$ 的敏感性。
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S5\_DAEMON / GAP\_S5\_SENSITIVITY --- daemon 虚假链率与三组超参数敏感性表。 -->}\end{flushleft}
 
-\subsection{跨数据集泛化}
+\subsection{RQ2：链级检测是否提升 APT 调查效果？}
 
-\textbf{设置。} 我们将相同流水线应用到DARPA E5（THEIA/Trace）。校准协议在E5良性数据上从头重新运行（协议不变，参数自动适配）。TGN和Transformer在E5良性链上重新训练。
+\paragraph{主要检测结果。}我们在第 2--4 天良性链上训练序列模型，在第 6 天攻击日测试。所有序列型 baseline 使用同一 Transformer 架构和训练流程，只改变链或片段的构造方式，以隔离因果链提取的贡献。
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S6\_MAIN --- 所有方法在 Top-$K\in\{10,50,100\}$ 下的 Edge-IoU、攻击节点召回与调查成本。 -->}\end{flushleft}
+预期结果是：相对窗口级、实体级和后处理链重建方法，本文方法在链级 Edge-IoU 与节点召回上更高，并显著降低达到完整攻击叙事所需检查的边/节点数量。
 
-<!-- DATA_NEEDED: GAP_S6_CROSS — 左右并排E3 vs E5肘部曲线，已发现参数表，两者链级F1 -->
+\paragraph{种子召回分解。}为避免把种子识别器能力与链提取能力混淆，我们报告
+\[
+\mathrm{Recall}_{\text{end-to-end}} = \mathrm{Recall}_{\text{seed}} \times \mathrm{Recall}_{\text{chain}\mid\text{seed-covered}}.
+\]
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S6\_SEEDRECALL --- 种子召回、链层条件召回及二者乘积。 -->}\end{flushleft}
 
-\textbf{预期。} 校准协议为E3和E5发现不同的$\hoplimit^*$值（展示了OS专属的适配），但两者上的链级F1始终很高（展示了泛化性）。
+\paragraph{攻击叙事恢复。}在 nginx exploit 案例上，我们按入口、持久化、横向移动和外传阶段标注 ground-truth 边，并统计需要合并多少条 top-ranked 预测链才能覆盖全部阶段。
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S6\_CAN --- 合并链数量与阶段覆盖曲线，对比 KAIROS/MAGIC 等 baseline。 -->}\end{flushleft}
 
-\subsection{消融研究}
+\subsection{RQ3：各组件贡献如何？}
 
-我们进行六项消融以隔离每个设计组件的贡献：
+我们从三个维度做消融。提取器组件包括：去除因果方向约束、用算术均值替代对数均值、去除分支加权细化、禁用 $\phi_{\text{proc}}$ 中的 $g_{\text{lifetime}}$ 与 $\beta_p$。特征与模型消融包括：去除全局节点统计、去除正弦时间编码、将 Transformer 替换为 LSTM 或 MLP。锚点采样消融包括 C-random-only、C-seed-only 与默认的 C-mixture。
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S6\_ABLATION --- 三组消融柱状图与逐项指标表。 -->}\end{flushleft}
 
-\begin{enumerate}
-\item \textbf{移除因果方向强制：} 将因果追溯替换为无向BFS。预期：最大的F1下降——证明因果方向的重要性。
-\item \textbf{移除TGN时序记忆：} 替换为静态边特征进行种子选择。预期：中等下降——证明TGN时序状态的价值。
-\item \textbf{移除分支加权相干性：} 仅使用$\chainCoherence$。预期：高分支良性进程（Firefox、编译）导致精确率下降。
-\item \textbf{移除Node Profiler：} 仅使用KAIROS原始特征。预期：中等下降。
-\item \textbf{移除正弦时间编码：} 替换为标量$\timegap$。预期：轻微下降——但证明多尺度时序的价值。
-\item \textbf{将Transformer替换为LSTM和MLP：} 预期：LSTM接近，MLP更差——证明Transformer选择的合理性。
-\end{enumerate}
+\subsection{RQ4：方法是否具备泛化性和实用效率？}
 
-<!-- DATA_NEEDED: GAP_S6_ABLATION — 消融柱状图，逐消融指标表 -->
+\paragraph{跨 engagement 泛化。}我们将同一协议应用到 DARPA E5。校准、训练和测试流程保持不变，只在 E5 良性数据上重新发现参数。
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S6\_CROSS --- E3/E5 校准曲线、发现参数与链级指标对比。 -->}\end{flushleft}
+预期上，不同 engagement 会产生不同 $\hoplimit^*$、$\tau_{\text{gap}}$ 和资源存活参数，但链级指标保持稳定。
 
-\subsection{效率分析}
-
-<!-- DATA_NEEDED: GAP_S6_EFFICIENCY — 逐组件延迟分解，内存分析，吞吐量对比 -->
-
-处理一天DARPA E3数据（约500万事件）大约需要10分钟：TGN推理占主导约8分钟，链提取增加约2分钟（CPU），Transformer推理在1秒内完成。这代表了144倍的实时吞吐量乘数。相比KAIROS，我们的方法增加不到20\%的开销。
+\paragraph{效率。}当前实现处理 E3 一天约 $5$M 事件的开销由种子评分主导；链提取为 CPU 侧增量开销，序列模型推断在提取后近似即时完成。
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S6\_EFFICIENCY --- 逐组件延迟、内存占用与吞吐对比。 -->}\end{flushleft}

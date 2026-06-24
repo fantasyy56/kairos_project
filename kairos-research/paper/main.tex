@@ -1,36 +1,50 @@
-\documentclass[sigconf,anonymous]{acmart}
+% IEEEtran conference template — common small-paper format
+\documentclass[conference,10pt,a4paper]{IEEEtran}
 
-% Packages
+% ---- Packages ----
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{multirow}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
-\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,allcolors=blue]{hyperref}
 \usepackage{cleveref}
 
-% Math macros
+% Math macros (shared with paper-CN)
 \input{math_commands}
 
-% Title
+% ---- Title and authors ----
 \title{Causal-Edge-Aware Temporal Chain Extraction for APT Detection on Provenance Graphs}
+
+\author{
+\IEEEauthorblockN{Anonymous Authors}
+\IEEEauthorblockA{Anonymous Affiliation}
+}
 
 \begin{document}
 
 \maketitle
 
+\begin{abstract}
 \input{sections/0_abstract}
+\end{abstract}
+
+\begin{IEEEkeywords}
+APT detection, provenance graph, causal chain, intrusion detection, Transformer
+\end{IEEEkeywords}
+
 \input{sections/1_introduction}
 \input{sections/2_background}
-\input{sections/3_related_work}
 \input{sections/4_system_design}
 \input{sections/5_metric_validation}
 \input{sections/6_evaluation}
 \input{sections/7_discussion}
+\input{sections/3_related_work}
 \input{sections/8_conclusion}
 
-\bibliographystyle{ACM-Reference-Format}
+\bibliographystyle{IEEEtran}
 \bibliography{references}
 
 \end{document}

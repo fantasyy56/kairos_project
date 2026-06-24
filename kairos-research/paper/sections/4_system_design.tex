@@ -1,37 +1,37 @@
-% §4 System Design
+% Method
+\section{Method}
+\label{sec:method}
 \label{sec:design}
 
 \subsection{Overview}
 
 Figure~\ref{fig:architecture} illustrates the system architecture. The pipeline consists of an offline phase (run once per deployment) and an online phase (run per test day).
 
-In the offline phase, we (1) compute per-node properties (Node Profiler) from the full provenance graph, (2) pretrain the TGN for edge type prediction on benign data (reused from KAIROS), (3) calibrate the Causal Coherence Metric parameters via elbow detection on benign chains, and (4) train the autoregressive Transformer on benign chains only.
+\paragraph{Design principle: separation of structural coherence and semantic anomaly.} A central design principle organizes everything that follows. We separate two concerns that prior work tends to entangle. The first concern, \emph{structural coherence}, is whether a given chain of events forms a dependency-plausible sequence on the kernel-recorded graph under our stated audit model (\S\ref{sec:audit_model}); this is a structural property of the chain itself, decidable in a model-free fashion from graph topology, timestamps, and identity continuity. The second concern, \emph{semantic anomaly}, is whether a given chain---once known to be dependency-plausible---looks unusual relative to benign system behavior; this is a distributional property, learnable only with respect to a benign reference. Our pipeline assigns these two concerns to two distinct layers: the Causal Coherence Metric $\branchCoherence$ governs the structural-coherence layer (\S\ref{sec:metric_def}) and is used for chain extraction and ranking only; a self-supervised sequence model produces a separate maliciousness score $A(\chain)$ that governs the semantic-anomaly layer (\S\ref{sec:seq_model}), and only $A$ feeds the final $\text{Alert}$ decision (\S\ref{sec:detection}). This separation has two consequences we exploit throughout. First, attack chains and benign chains are both expected to be structurally coherent---attacks obey OS physics---so $\branchCoherence$ alone does not discriminate them; discrimination is the job of the sequence model. Second, the two layers can be evaluated, calibrated, and improved independently, which is what allows them to rest on independent foundations (\S\ref{sec:calibration}, \S\ref{sec:training_chains}).
 
-In the online phase, for a test day: (1) the TGN processes events sequentially, maintaining temporal memory state, and outputs a reconstruction loss per edge; (2) edges whose loss exceeds a threshold (95th percentile of benign loss) trigger causal chain extraction; (3) the Chain Extractor performs bidirectional causal tracing, prunes branches via $\branchCoherence$, and outputs candidate chains; (4) the autoregressive Transformer computes per-event reconstruction losses and maps them to anomaly percentiles via pre-computed eCDFs; (5) chains with high anomaly scores are flagged, and overlapping high-score chains are merged into complete attack paths.
-
-\subsection{Node Profiler: Global Graph Context}
-
-We precompute five node-level properties from the full provenance graph and concatenate them with KAIROS's existing 16-dimensional hierarchical path hash (node2higvec), producing a 21-dimensional node representation.
+\paragraph{Chain correctness levels.} To keep claims about ``chain quality'' precise throughout the paper, we distinguish three levels at which a chain may be called correct, each with a corresponding evaluation metric in \S\ref{sec:evaluation}:
 
 \begin{enumerate}
-\item \textbf{Inverse Document Frequency (IDF).} $\text{IDF}(v) = \log(T / (t_v + 1))$, where $T$ is the number of time windows and $t_v$ is the number of windows containing node $v$. Higher IDF indicates rarer nodes.
-\item \textbf{Path Sensitivity.} Binary indicator: whether the node's path contains security-sensitive keywords (\texttt{/etc/passwd}, \texttt{/etc/shadow}, \texttt{authorized\_keys}, \texttt{/root/}, etc.).
-\item \textbf{Degree Anomaly.} $|\text{deg}(v) - \mu_{\text{deg}}(\text{type}(v))| / \sigma_{\text{deg}}(\text{type}(v))$, measuring how unusual the node's connectivity is relative to its type.
-\item \textbf{Bridge Centrality.} Normalized betweenness centrality, capturing the node's role as a structural bridge in the provenance graph.
-\item \textbf{Community ID.} Louvain community assignment on the undirected provenance graph, providing coarse functional grouping.
+\item \textbf{Dependency-plausible chain (DPC).} A chain whose normalized log-coherence $\log \branchCoherence(\chain)$ exceeds a threshold determined from benign data (\S\ref{sec:metric_def}). DPC is a structural property: under our audit model, the chain has high identity continuity and no detectable third-party interference. Both benign and attack chains can be DPCs; DPC alone does not imply maliciousness.
+\item \textbf{Attack-relevant chain (ARC).} A DPC that intersects the ground-truth attack edge set, i.e., $\chain \cap \mathrm{GT}_{\text{attack}} \neq \emptyset$. ARC requires labels and is therefore a ground-truth-side concept used only at evaluation.
+\item \textbf{Complete attack narrative (CAN).} A merged set of ARCs that covers the canonical entry / lateral-movement / exfiltration stages of the recorded attack campaign.
 \end{enumerate}
 
-Node Profiler is feature engineering, not a claimed contribution. No existing Transformer-on-provenance method (EagleEye, Sentient, GET-AID) systematically injects global graph statistics into token features.
+In the offline phase, we (1) calibrate the Causal Coherence Metric parameters from benign data, (2) train an edge-level seed scorer on benign data, and (3) train the sequence model on benign chains drawn under the calibrated extractor. In the online phase, for each test day, edges flagged by the seed scorer trigger bidirectional causal chain extraction guided by $\branchCoherence$; the extracted chains are then scored by the sequence model, mapped to maliciousness scores $A(\chain)$ via component-wise empirical CDFs, and flagged-and-merged into attack paths when $A(\chain)$ exceeds a calibrated threshold.
 
-\subsection{TGN Seed Identification}
+\paragraph{Scope: linearized paths.} We extract and score \emph{linearized seed-centric causal paths}; merged alerts form an investigation graph at the analyst-facing layer. Extending $\branchCoherence$ to native DAG scoring (without linearization) is future work (\S\ref{sec:discussion}).
 
-We reuse KAIROS's pretrained Temporal Graph Network (TGN), which consists of a GraphAttentionEmbedding module (2-layer TransformerConv, 8 heads), a TGNMemory module with IdentityMessage and LastAggregator, and a LinkPredictor MLP. The TGN is trained on benign days (D2-D4) to predict the event type of each provenance edge given its source and destination node states.
+\subsection{Seed Identification}
+\label{sec:seed}
 
-At inference, the TGN processes events sequentially, updating node memory states after each event. For each edge $e = (u \rightarrow v, t, \tau)$, it outputs a reconstruction loss $\mathcal{L}_{\text{TGN}}(e)$ measuring how well the model predicts the edge type $\tau$. Edges where $\mathcal{L}_{\text{TGN}}(e)$ exceeds the 95th percentile of the benign loss distribution are designated as \emph{seeds} for chain extraction.
+The chain extractor of \S\ref{sec:extractor} requires, for each candidate chain, an anchor edge to extract from. We refer to such edges as \emph{seeds}. Our framework is agnostic to how seeds are obtained: any per-edge anomaly score that highlights edges deserving closer inspection can drive chain extraction. In the current instantiation we adopt the pretrained Temporal Graph Network (TGN) of KAIROS~\cite{cheng2024kairos} as the seed scorer, treating the further specialization of this component as orthogonal future work.
 
-The TGN's temporal memory is critical: node states evolve as the system runs, so the model learns that a fork from \texttt{nginx} is less common than a fork from \texttt{bash}, and that certain event type transitions are anomalous for specific nodes. Static features cannot capture this temporal context.
+Concretely, the TGN scores each edge $e = (u \rightarrow v, t, \tau)$ by a reconstruction loss $\mathcal{L}_{\text{TGN}}(e)$ that measures how well its temporal node memories predict the edge type $\tau$ from $(u, v, t)$. Edges with $\mathcal{L}_{\text{TGN}}(e)$ above the 95th percentile of the benign loss distribution are designated seeds.
+
+Beyond the seed score itself, we also enrich each provenance node with a small set of global graph statistics that the sequence model later consumes as part of its token features. Specifically, for every node $v$ we compute: an inverse-document-frequency rarity score $\text{IDF}(v) = \log(T / (t_v + 1))$ where $T$ is the number of time windows and $t_v$ is the number of windows containing $v$; a binary path-sensitivity indicator over a small list of security-relevant paths (\texttt{/etc/passwd}, \texttt{/etc/shadow}, \texttt{authorized\_keys}, \texttt{/root/}, etc.); a per-type degree-anomaly $z$-score; a normalized betweenness centrality; and a Louvain community identifier on the undirected provenance graph. These quantities are precomputed once per deployment and concatenated with KAIROS's 16-dimensional hierarchical path hash (\textsc{node2higvec}) to yield a 21-dimensional node representation. Like the seed scorer, this featurization is implementation-level rather than a claimed contribution; we describe it for reproducibility.
 
 \subsection{Causal Chain Extractor}
+\label{sec:extractor}
 
 Given a seed edge $s = (u_0 \rightarrow v_0, t_0, \tau_0)$ and the provenance graph $\graph$, the Chain Extractor performs bidirectional causal tracing to construct candidate chains.
 
@@ -43,7 +43,7 @@ Algorithm~\ref{alg:extract} presents the extraction procedure. The algorithm mai
 \caption{Causal Chain Extraction}
 \label{alg:extract}
 \begin{algorithmic}[1]
-\Require Provenance graph $\graph$, seed edge $s$, parameters $\hoplimit^*, \timedecay^*, \branchpenalty^*, B=20$
+\Require Provenance graph $\graph$, seed edge $s$, parameters $\hoplimit^*, \timedecay^*, \branchpenalty^*, \phi_{\min}, B=20$
 \Ensure Set of candidate chains with $\branchCoherence$ scores
 \State $\text{chains} \gets \{ [s] \}$
 \State $\text{current} \gets \{ s \}$
@@ -57,7 +57,7 @@ Algorithm~\ref{alg:extract} presents the extraction procedure. The algorithm mai
         \State $\text{next} \gets \text{next} \cup \textsc{OutgoingCausal}(\graph, v, \hoplimit^*)$
       \EndIf
     \EndFor
-    \If{$\text{next} = \emptyset$} \State \textbf{break} \Comment{Causal boundary reached}
+    \If{$\text{next} = \emptyset$} \State \textbf{break} \Comment{Identity scope reached}
     \EndIf
     \State $\text{chains} \gets \textsc{BranchExtend}(\text{chains}, \text{next}, \text{direction})$
     \If{$|\text{chains}| > B$}
@@ -70,11 +70,12 @@ Algorithm~\ref{alg:extract} presents the extraction procedure. The algorithm mai
 \end{algorithmic}
 \end{algorithm}
 
-\textsc{IncomingCausal} and \textsc{OutgoingCausal} perform BFS along directed provenance edges within $\hoplimit^*$ hops, filtering to event types that represent causal influence (EXEC, FORK, WRITE, SENDTO) and excluding consequence-only types (READ, CLOSE). \textsc{BranchExtend} creates the Cartesian product of existing chains with new edges, preserving temporal ordering. \textsc{PruneByCoherence} retains the top-$B$ chains ranked by $\branchCoherence$.
+\textsc{IncomingCausal} and \textsc{OutgoingCausal} perform BFS along directed provenance edges within $\hoplimit^*$ hops, filtering to event types that represent dependency influence (EXEC, FORK, WRITE, SENDTO) and excluding consequence-only types (READ, CLOSE). \textsc{BranchExtend} creates the Cartesian product of existing chains with new edges, preserving temporal ordering. \textsc{PruneByCoherence} retains the top-$B$ chains ranked by $\branchCoherence$.
 
 \subsubsection{Causal Coherence Metric}
+\label{sec:metric_def}
 
-The metric quantifies the causal structural integrity of an event chain. It is model-free---computable directly from the provenance graph topology and timestamps without any trained model.
+The metric quantifies the structural coherence of an event chain under our audit model (\S\ref{sec:audit_model}). It is model-free---computable directly from the provenance graph topology, timestamps, and entity-identity attributes, without any trained model. \emph{We call $\branchCoherence$ a coherence score, not a probability}: it is a length-normalized aggregate over audit-grounded dependency factors, and we use it only for chain extraction, ranking, and pruning. The final maliciousness verdict (\S\ref{sec:detection}) is produced by a separate score $A(\chain)$.
 
 \textbf{Pairwise coherence.} For consecutive events $e_i, e_{i+1}$ in a chain, let $\graphdist_i$ be the shortest directed path length from $\text{dst}(e_i)$ to $\text{src}(e_{i+1})$ in $\graph$ ($\graphdist_i = \infty$ if no directed path exists), and $\timegap_i = t_{i+1} - t_i$.
 
@@ -83,66 +84,112 @@ The pairwise coherence $\phiMetric(e_i, e_{i+1})$ distinguishes three cases base
 \begin{equation}
 \phiMetric(e_i, e_{i+1}) =
 \begin{cases}
-\exp(-\graphdecay^* \cdot \graphdist_i) & \text{if } \graphdist_i = 0 \land \text{type}(\text{dst}(e_i)) = \text{subject} \\[4pt]
-\exp(-\graphdecay^* \cdot \graphdist_i) \cdot \exp(-\timedecay^* \cdot \timegap_i) & \text{if } \graphdist_i = 0 \land \text{type}(\text{dst}(e_i)) \in \{\text{file}, \text{netflow}\} \\[4pt]
-\exp(-\graphdecay^* \cdot \graphdist_i) \cdot \exp(-\timedecay^* \cdot \timegap_i) & \text{if } 0 < \graphdist_i \leq \hoplimit^* \\
+\phiMetric_{\text{proc}}(e_i, e_{i+1}) & \text{if } \graphdist_i = 0 \land \text{type}(\text{dst}(e_i)) = \text{subject} \\[4pt]
+\phiMetric_{\text{res}}(e_i, e_{i+1}) & \text{if } \graphdist_i = 0 \land \text{type}(\text{dst}(e_i)) \in \{\text{file}, \text{netflow}\} \\[4pt]
+\exp(-\graphdecay^* \cdot \graphdist_i) \cdot \phiMetric_{\text{res}}(e_i, e_{i+1}) & \text{if } 0 < \graphdist_i \leq \hoplimit^* \\
 0 & \text{if } \graphdist_i > \hoplimit^*
 \end{cases}
 \label{eq:phi}
 \end{equation}
 
-The three cases are grounded in operating system principles, not chosen arbitrarily:
+The three sub-cases $\phiMetric_{\text{proc}}, \phiMetric_{\text{res}}$ are detailed below (\S\ref{sec:case_proc}--\S\ref{sec:case_res}).
 
-\begin{enumerate}
-\item \textbf{Identity-preserving bridge} ($\graphdist_i = 0$, node is a process). A process's PID and memory space are exclusive capabilities guaranteed by the kernel. The process forked by event $e_i$ is the exact same process that initiates event $e_{i+1}$. The causal relationship is absolute and independent of elapsed time. We set $\timedecay^* \approx 0$ (no temporal decay).
+\paragraph{Three audit-grounded coherence factors.} We make explicit what $\phiMetric$ measures, since this determines the validity of every term in Eq.~\ref{eq:phi}. Throughout this work we adopt \emph{kernel-mediated dependency evidence under our stated audit model} as the semantics (\S\ref{sec:audit_model})---the dependency relation that the kernel records when it mediates a system call (process $p$ wrote file $f$, process $q$ subsequently read $f$). This is weaker than data-flow causality (which would require taint tracking) but stronger than mere graph-level reachability. Under this semantics, the validity of $\phiMetric$ rests on three audit-grounded factors, one per case below: (i) every individual provenance edge corresponds to a kernel-mediated system call, so single-edge dependency evidence is \emph{observed} rather than inferred; (ii) when two consecutive events share an exclusive-capability bridging node, the kernel certifies that they originate from the same execution identity (with the qualifications of \S\ref{sec:case_proc}); (iii) when they share a stateful bridging node, the implied dependency link can be perturbed by third-party interference on the shared resource, an event whose baseline hazard we model per resource class (\S\ref{sec:case_res}). The three cases of $\phiMetric$ are designed to mirror these three audit-grounded factors:
 
-\item \textbf{Stateful bridge} ($\graphdist_i = 0$, node is a file or socket). Files and sockets are shared resources. Between the write by $e_i$ and the read by $e_{i+1}$, a third party may have modified the resource, breaking the causal chain. Temporal proximity provides evidence of causality: the longer the gap, the less reliable the assumed causal relationship.
+\subsubsection{Case 1: Identity-Continuity Bridge (Process)}
+\label{sec:case_proc}
 
-\item \textbf{Indirect path} ($0 < \graphdist_i \leq \hoplimit^*$). Events are connected through intermediate nodes. The causal connection is probabilistic, and temporal decay applies.
-\end{enumerate}
-
-\textbf{Chain-level coherence.} The chain coherence $\chainCoherence(\chain)$ is the arithmetic mean of pairwise scores:
+When $\graphdist_i = 0$ and the bridging node is a process (subject), the bridging entity is supposed to be the same execution context. The kernel guarantees process identity within the lifetime of a process (\S\ref{sec:audit_model}), but high-confidence identity continuity additionally requires that no execution-context boundary has been crossed between the two events. We formalize this with a multiplicative coherence factor:
 
 \begin{equation}
-\chainCoherence(\chain) = \frac{1}{n-1} \sum_{i=1}^{n-1} \phiMetric(e_i, e_{i+1})
+\phiMetric_{\text{proc}}(e_i, e_{i+1}) = \exp(-\beta_p \cdot \timegap_i) \cdot g_{\text{thread}} \cdot g_{\text{exec}} \cdot g_{\text{lifetime}}
+\label{eq:phi_proc}
+\end{equation}
+
+where each factor encodes one source of identity continuity, calibrated from benign data:
+
+\begin{itemize}
+\item $\beta_p \approx 10^{-4}$/sec: a mild time decay that prevents long-lived daemons (e.g., \texttt{sshd}, \texttt{cron}, browser parents) from accumulating arbitrarily long intra-process chains as if $\phiMetric_{\text{proc}}=1$ regardless of $\timegap$. At $\timegap_i=30$\,min, $\exp(-\beta_p \timegap_i) \approx 0.83$.
+\item $g_{\text{thread}}$: $1$ if both events are issued on the same TID (when reported by the audit subsystem; CADETS does), and a calibrated $g_{\text{thread}}^{\text{cross}} \in (0, 1)$ when only the PID matches.
+\item $g_{\text{exec}}$: $1$ if no \texttt{execve} boundary occurs in $[t_i, t_{i+1}]$ on the bridging process, and a calibrated $g_{\text{exec}}^{\text{crossed}} \in (0, 1)$ otherwise (the memory image has been reset, weakening identity continuity).
+\item $g_{\text{lifetime}}$: a decay against absolute process lifetime, $g_{\text{lifetime}} = \max(\epsilon, 1 - L / \tau_{\text{lifetime}})$ where $L$ is the bridging process's age at $t_i$ and $\tau_{\text{lifetime}}$ is calibrated per resource class.
+\end{itemize}
+
+This case is the strongest of the three, but it is no longer ``exact''---it is high-confidence identity continuity, conditioned on observable execution-context attributes and decayed against process lifetime. We report sensitivity to each factor in \S\ref{sec:metric}, including a long-lived-daemon false-link analysis.
+
+\subsubsection{Case 2: Resource-State Bridge}
+\label{sec:case_res}
+
+When $\graphdist_i = 0$ and the bridging node is a stateful resource (file or socket), the kernel-recorded link ``$e_i$ wrote $r$, $e_{i+1}$ read $r$'' implies a real dependency connection \emph{only when no other write to $r$ has occurred in $[t_i, t_{i+1}]$}. We model this third-party interference as a \emph{first-order baseline hazard model whose form we vary per resource class}, with Poisson as the baseline form for file writes:
+
+\begin{itemize}
+\item \textbf{Regular files.} Modeling interfering writes as a Poisson process with rate $\lambda_r$: $\phiMetric_{\text{res}}(e_i, e_{i+1}) = \exp(-\lambda_r \cdot \timegap_i)$. We report Poisson goodness-of-fit on benign E3/E5 traces in \S\ref{sec:metric}; if the fit fails for a given resource class, we fall back to an empirical (Kaplan--Meier) survival function calibrated on benign data.
+\item \textbf{Pipes / FIFOs.} Pipes enforce ordered consumption: a reader necessarily reads bytes written by the most recent writer. We set $\phiMetric_{\text{res}} = 1$ for adjacent write--read pairs on the same pipe, decayed only by $\exp(-\beta_t \timegap_i)$ when the gap exceeds a calibrated $\tau_{\text{pipe}}$ that bounds the buffer-residency expectation.
+\item \textbf{Network sockets (incl.\ Unix domain).} We model connection-state survival: writes and reads within the lifetime of a single TCP/Unix connection (delimited by SYN/FIN or \texttt{connect}/\texttt{close}) carry $\phiMetric_{\text{res}} = \exp(-\beta_s \timegap_i)$, while cross-connection pairs are treated as $\graphdist_i = 1$ rather than $0$.
+\item \textbf{Shared memory and ambiguous IPC.} \texttt{mmap}-shared regions, SysV shm, and signal-based IPC are declared \emph{out of model}: their dependency semantics are not visible to the audit collector, and we report this as a scope limitation (\S\ref{sec:discussion}).
+\end{itemize}
+
+The calibrated $\lambda_r$ (and the analogous $\beta_t, \beta_s$) play the role of a per-resource baseline hazard rate; the survival factor $\exp(-\lambda_r \timegap_i)$ is therefore a \emph{first-order baseline coherence factor} that we validate empirically per resource class, not a probability claim about the chain link.
+
+\subsubsection{Case 3: Indirect Path}
+
+When two events are connected through $\graphdist_i$ intermediate nodes, the chain survives only if every intermediate hop also represents a real dependency connection. Treating per-hop coherence as multiplicative gives $\exp(-\graphdecay^* \cdot \graphdist_i)$, combined with the resource-state factor of \S\ref{sec:case_res}. $\graphdecay^*$ is calibrated from benign data as the per-hop log-attenuation of dependency evidence; the hard cutoff at $\graphdist_i > \hoplimit^*$ encodes the empirical fact that the operating system has a finite identity scope---a property formalized and calibrated in \S\ref{sec:calibration}.
+
+\paragraph{Reading $\phiMetric$.} Equation~\ref{eq:phi} can therefore be read as a \emph{factored coherence score over three audit-grounded dependency factors}: case~1 contributes high-confidence identity continuity with decay/conditioning, case~2 contributes a resource-class baseline hazard factor, and case~3 contributes the multi-hop attenuation. Crucially, none of these factors is validated against attack ground truth; they are validated, respectively, by kernel semantics (case~1), by per-resource-class goodness-of-fit on benign data (case~2), and by the same per-hop principle aggregated structurally (case~3).
+
+\paragraph{Chain-level coherence.} The chain coherence $\chainCoherence(\chain)$ aggregates pairwise scores via length-normalized mean log, with a smoothing floor $\phi_{\min}$ that compensates for audit incompleteness (missing edges, transient collector loss):
+
+\begin{equation}
+\log \chainCoherence(\chain) = \frac{1}{n-1} \sum_{i=1}^{n-1} \log \max\!\bigl(\phiMetric(e_i, e_{i+1}),\ \phi_{\min}\bigr)
 \label{eq:chain_phi}
 \end{equation}
 
-We use the arithmetic mean rather than the geometric mean for robustness: a single missing audit log event (common in production systems) would drive a geometric mean to zero.
+We use the mean of logs rather than the arithmetic mean of pairwise scores because the latter is dominated by a few high-coherence links and can mask a weak link in the middle of a chain; the $\phi_{\min}$ floor prevents a single missing audit log event (common in production systems) from driving the aggregate to $-\infty$. We report sensitivity to $\phi_{\min} \in \{10^{-3}, 10^{-2}, 10^{-1}\}$ in \S\ref{sec:metric}.
 
-\textbf{Branch-Weighted Coherence.} Normal operating system processes exhibit power-law branching: a Firefox process may write 50 files, while a compilation job spawns hundreds of children. Attack chains, in contrast, are structurally sparse---the nginx exploit chain in DARPA E3 has a branching factor of approximately 2.5. To exploit this structural difference, we introduce the \emph{Structural Sparsity Prior}:
+\paragraph{Length-aware variant.} For robustness analysis only, we also report a length-normalized variant
+\begin{equation}
+S(\chain) = \log \chainCoherence(\chain) - \gamma \log n
+\label{eq:phi_length}
+\end{equation}
+which prevents very short chains (small $n$) from dominating top-$\chainCoherence$ rankings during extraction. $\gamma$ is calibrated from benign data jointly with $\branchpenalty^*$.
+
+\paragraph{Deployment-time refinement: branch-weighted coherence.} Equation~\ref{eq:phi_bw} below introduces a \emph{deployment-time refinement} on top of $\chainCoherence$; it is \emph{not} part of the coherence definition itself but a precision-improving prior motivated by an empirical observation about benign system behavior. We include it because it materially reduces false alarms in practice, and we explicitly mark its scope so that the reader can see at a glance which guarantees come from the metric's audit-grounded definition (\S\ref{sec:metric_def}, eq.~\ref{eq:phi}--\ref{eq:chain_phi}) and which come from this empirical adjustment.
+
+The empirical observation is that normal operating-system processes exhibit power-law branching: a Firefox process may write to 50 files, while a compilation job spawns hundreds of children. Targeted APT chains, in contrast, are typically structurally sparse---the nginx exploit chain in DARPA E3, for instance, has a branching factor of approximately 2.5. We exploit this contrast through a \emph{deployment-time structural sparsity prior}:
 
 \begin{equation}
-\branchCoherence(\chain) = \chainCoherence(\chain) \cdot \exp(-\branchpenalty^* \cdot \branchfactor(\chain))
+\branchCoherence(\chain) = \chainCoherence(\chain) - \branchpenalty^* \cdot \branchfactor(\chain)
 \label{eq:phi_bw}
 \end{equation}
 
-where $\branchfactor(\chain)$ is the mean out-degree of non-terminal nodes in $\chain$ within the full provenance graph. The parameter $\branchpenalty^*$ is calibrated automatically from benign data.
+where $\branchfactor(\chain)$ is the mean out-degree of non-terminal nodes in $\chain$ within the full provenance graph and $\branchpenalty^*$ is calibrated from benign data. (Equation~\ref{eq:phi_bw} acts in log space, consistent with Eq.~\ref{eq:chain_phi}.) Because this refinement encodes an assumption about attack \emph{shape} rather than attack \emph{semantics}, it is compatible with our no-attack-templates commitment but inherits a corresponding scope limitation: attacks that fan out to many processes (e.g., ransomware, worm-style propagation) violate the sparsity assumption and require a different deployment-time prior. We discuss this scope in \S\ref{sec:discussion}.
 
 \subsubsection{Calibration Protocol}
+\label{sec:calibration}
 
-The metric parameters $\hoplimit^*, \timedecay^*, \graphdecay^*, \branchpenalty^*$ must be set without attack labels. We propose an elbow-detection protocol that discovers them from benign data.
+The metric parameters $\hoplimit^*, \timedecay^*, \graphdecay^*, \branchpenalty^*, \phi_{\min}, \beta_p, \tau_{\text{lifetime}}, \gamma$ must be set without attack labels. We do so via a calibration protocol that discovers, from benign data alone, the \emph{natural identity scope} of the operating system---the structural depth and temporal span beyond which apparent dependency links cease to reflect kernel-mediated identity continuity.
+
+\paragraph{Calibration chains: process lifecycles as kernel-certified identity scopes.} Calibrating $\branchCoherence$ requires a corpus of chains that faithfully represent how dependency evidence actually extends through a benign system; if the corpus is itself a coarse approximation, the discovered scope will reflect the corpus rather than the OS. We therefore draw calibration chains from a structure the kernel itself certifies as an identity scope: the \emph{process lifecycle}. From the moment a process is created by \texttt{fork}/\texttt{clone} to the moment it terminates, all of its system calls are issued under a single PID, in a single address space, by a single control flow---attributes the kernel guarantees are exclusive and non-reusable for the duration of the process. Chains sampled from such scopes inherit edge-level identity evidence directly from the kernel rather than from any heuristic. This makes process-lifecycle chains the appropriate substrate on which to ask, ``how far does dependency evidence actually extend in this system?''.
+
+Concretely, we sample $K$ process-lifecycle anchors from benign data and treat each anchor process's earliest dependency-relevant event as the seed for bidirectional extraction; the resulting chains serve as input to the protocol below.
+
+\paragraph{Discovering the scope.} The protocol identifies $(\hoplimit^*, \tau^*)$ at which mean $\log \chainCoherence$ ceases to grow with the corresponding parameter:
 
 \begin{enumerate}
-\item Extract chains from $K$ benign TGN seeds using intentionally loose parameters ($\hoplimit=10$, $\timedecay=0.01$).
-\item For each $\hoplimit \in \{1, 2, \dots, 10\}$: re-extract chains from the \emph{same} seeds (varying only $\hoplimit$), compute mean $\chainCoherence$ over all extracted chains.
-\item Plot $\chainCoherence$ vs. $\hoplimit$. The curve initially rises (more hops capture genuine causality), then plateaus or declines (noise forced into chains). Select $\hoplimit^*$ at the elbow---the point of maximum negative second derivative.
-\item Fix $\hoplimit^*$; calibrate $\timedecay^*$ analogously via the elbow of $\chainCoherence$ vs.~maximum temporal gap $\tau$.
+\item Extract chains from $K$ process-lifecycle seeds using intentionally loose parameters ($\hoplimit=10$, $\timedecay=0.01$).
+\item For each $\hoplimit \in \{1, 2, \dots, 10\}$, re-extract chains from the \emph{same} seeds (varying only $\hoplimit$) and compute mean $\log \chainCoherence$ over all extracted chains. The curve initially rises (more hops capture genuine dependency evidence) and then plateaus or declines (noise is forced into chains). $\hoplimit^*$ is set at the curve's inflection---computed in our implementation as the point of maximum negative second derivative, though any standard knee-detection heuristic suffices.
+\item Fix $\hoplimit^*$; calibrate $\timedecay^*$ analogously via the inflection of $\log \chainCoherence$-vs-$\tau$.
 \item Set $\graphdecay^* = 1/\hoplimit^*$, $\timedecay^* = 1/\tau^*$.
-\item Calibrate $\branchpenalty^*$ as the value such that the top 10\% most coherent benign chains have mean $\branchfactor$ below a specified quantile.
+\item Calibrate $\phi_{\min}$ as the 1st percentile of per-pair $\phiMetric$ on benign chains (the floor absorbs the long tail of audit incompleteness).
+\item Calibrate $\branchpenalty^*$ as the value at which the top-10\% most coherent benign chains have mean $\branchfactor$ below a specified quantile; calibrate $\gamma$ jointly so that the length distribution of top-$\branchCoherence$ benign chains matches the unconditional benign chain-length distribution.
 \end{enumerate}
 
-The elbow is guaranteed to exist because operating systems have finite causal depth. As $\hoplimit$ increases, the extraction eventually connects all chains to \texttt{init} (PID 1) or core kernel threads, pulling in unrelated events and causing coherence to drop.
+\paragraph{Why an inflection must exist.} The existence of such an inflection is a property of the operating system rather than a fortunate empirical regularity. Operating systems have finite identity scope: as $\hoplimit$ increases, the extraction eventually connects all chains to \texttt{init} (PID 1) or core kernel threads, pulling in unrelated events and forcing $\log \chainCoherence$ to drop. The inflection's \emph{location} therefore measures a real OS attribute---the system's natural identity scope---and our role is to discover it from data, not to tune it. Different audit-log granularities (e.g., Linux \texttt{auditd} vs.~Windows ETW) produce different natural scopes, and the same protocol adapts automatically.
 
-This protocol is a core contribution: it requires zero attack labels, zero manual tuning, and automatically adapts to different OS configurations (Linux auditd vs.~Windows ETW produce different logging granularities and therefore different natural causal horizons).
+\subsection{Self-Supervised Sequence Modeling}
+\label{sec:seq_model}
 
-\subsection{Autoregressive Transformer}
-
-The extracted chains are validated by a self-supervised autoregressive Transformer. We emphasize that the Transformer is not the contribution---it serves as the measurement instrument for chain quality.
-
-\subsubsection{Why Autoregressive}
-
-We adopt autoregressive next-event prediction rather than masked event modeling (MLM/BERT). In provenance graphs, causality flows strictly forward in time. MLM allows the model to condition on future events when reconstructing a masked past event, violating the causal arrow. Autoregressive prediction---conditioning each event only on its causal predecessors---preserves the causal semantics of the provenance data.
+The extracted chains feed into a self-supervised sequence model whose role is the second of our two design layers (\S\ref{sec:design}, Overview): semantic-anomaly scoring under benign distribution, given chains already known to be dependency-plausible. We emphasize that this layer is interchangeable: any sequence model that supports next-event prediction over our token features could play the same role; in our implementation we use a small Transformer encoder trained autoregressively, because forward-in-time prediction respects the dependency arrow of provenance edges (whereas masked event modeling would condition on future events when reconstructing past ones).
 
 \subsubsection{Input Representation}
 
@@ -150,7 +197,7 @@ Each event $e_i = (u \rightarrow v, t, \tau)$ is encoded as a 75-dimensional fea
 
 \begin{itemize}
 \item \textbf{Source node features} (24 dims): node2higvec (16), node type one-hot (3), IDF (1), path sensitivity (1), degree anomaly (1), community ID (1), bridge centrality (1).
-\item \textbf{Edge features} (20 dims): edge type one-hot (7), sinusoidal time encoding of $\timegap_i$ (8), learned graph distance embedding of $\graphdist_i$ (4), bridge type flag (3), was-seed indicator (1).
+\item \textbf{Edge features} (24 dims): edge type one-hot (7), sinusoidal time encoding of $\timegap_i$ (8), learned graph distance embedding of $\graphdist_i$ (4), bridge type flag (3), was-seed indicator (1), identity-continuity factors $(g_{\text{thread}}, g_{\text{exec}}, g_{\text{lifetime}})$ (1, quantized index).
 \item \textbf{Destination node features} (24 dims): same structure as source.
 \item \textbf{Structure markers} (3 dims): is-branch-point, is-merge-point, depth-from-seed.
 \end{itemize}
@@ -161,7 +208,7 @@ The 75-dim raw feature is projected to $\mathbb{R}^{128}$ via a learned linear l
 
 \subsubsection{Architecture and Training}
 
-We use a 3-layer Transformer Encoder (d\_model=128, 4 attention heads, d\_ff=512, dropout=0.1, $\approx$1.5M parameters). At each autoregressive step, given $[e_1, \dots, e_i]$, the model predicts $e_{i+1}$ via a multi-task prediction head:
+The encoder is a 3-layer Transformer (d\_model=128, 4 attention heads, d\_ff=512, dropout=0.1, $\approx$1.5M parameters). At each autoregressive step, given $[e_1, \dots, e_i]$, the model predicts $e_{i+1}$ via a multi-task prediction head:
 
 \begin{itemize}
 \item \textbf{Categorical}: edge type (7-class CE), source node type (3-class CE), destination node type (3-class CE).
@@ -171,19 +218,47 @@ We use a 3-layer Transformer Encoder (d\_model=128, 4 attention heads, d\_ff=512
 
 The total loss is the equal-weighted sum of all components. Cosine similarity is used for node embeddings because MSE on sparse hash vectors drives the model toward predicting all zeros; cosine similarity focuses on directional alignment in the semantic space. Time prediction uses log-spaced classification buckets because event inter-arrival times are heavy-tailed---a single MSE error on a 24-hour gap would produce a gradient that destabilizes training.
 
-Training uses only benign chains extracted from DARPA days 2--4. Chains of length $n < 3$ are discarded (single-event anomalies are the TGN's responsibility). Maximum sequence length is 64; overlong chains are truncated seed-centrically (events furthest from the seed in causal distance are dropped first). Training converges in under one GPU-hour.
+\paragraph{Training chains: mixture anchoring for distributional coverage.}
+\label{sec:training_chains}
+The model is trained on benign chains drawn from DARPA days 2--4. The provenance of these chains warrants explicit treatment, because it differs deliberately from the calibration corpus of \S\ref{sec:calibration}. Calibration asks an OS-level question (``how far does dependency evidence extend in a typical execution unit?'') and is therefore best served by process-lifecycle anchors, which the kernel certifies as identity scopes. Training, by contrast, asks a statistical question---``what does the distribution of benign causal chains look like, when chains are produced by the very procedure that will run online?''---and the appropriate answer is dictated by a different principle: \emph{distributional coverage with partial procedural symmetry between training and inference}.
+
+Specifically, online detection produces chains by anchoring extraction at seed edges from \S\ref{sec:seed} (i.e., high-TGN-loss edges) and running the bidirectional procedure of Algorithm~\ref{alg:extract} with the calibrated $(\hoplimit^*, \timedecay^*, \graphdecay^*, \branchpenalty^*, \phi_{\min})$. We therefore draw training anchors from a \emph{mixture}:
+
+\begin{itemize}
+\item \textbf{50\% uniform random anchors} across event types from benign data: ensures broad coverage of the benign distribution, including event types that are rare among high-loss anchors but may appear in attack chains.
+\item \textbf{50\% benign high-loss anchors} (TGN reconstruction loss above the 95th percentile on benign days): matches the online covariate distribution, so that the training distribution overlaps the inference distribution rather than relying on transfer.
+\end{itemize}
+
+Two consequences follow. First, any over-approximation that the extractor contributes---a residual artifact of using kernel-mediated reachability tightened by $\branchCoherence$---is folded into the benign distribution that the model learns; the same artifact recurs at test time and is not flagged as anomalous. Second, the requirement here is one of \emph{distributional coverage plus partial procedural symmetry}, not of per-chain causal ground truth: training chains do not need to be ``proven'' true dependency chains, because the sequence model's role is to detect distributional deviation under a fixed extraction procedure, not to certify dependency causality on its own. We report ablations over the mixture ratio (random-only, seed-only, 50/50) in \S\ref{sec:evaluation}.
+
+The two roles of benign data---calibration and training---thus rest on independent foundations: kernel-certified identity scopes justify what we calibrate, while distributional coverage with partial procedural symmetry justifies what we train.
+
+Beyond the anchor-sampling rule above, we apply standard preprocessing: chains of length $n < 3$ are discarded (single-event anomalies fall to the seed scorer); maximum sequence length is 64; overlong chains are truncated seed-centrically (events furthest from the seed in causal distance are dropped first). Long-gap chain truncation: if $\timegap_i > \tau_{\text{gap}}$ between consecutive events, the chain is split (we report $\tau_{\text{gap}}$ sensitivity in \S\ref{sec:metric}). Training converges in under one GPU-hour.
 
 \subsection{Detection via Component-wise eCDF}
+\label{sec:detection}
 
-At inference, the trained Transformer computes per-event prediction losses. To convert raw losses into anomaly scores, we use component-wise empirical cumulative distribution functions (eCDFs), calibrated on a held-out benign validation set:
+At inference, the trained Transformer computes per-event prediction losses. To convert raw losses into the maliciousness score $A(\chain)$, we use component-wise empirical cumulative distribution functions (eCDFs), calibrated on a held-out benign validation set. Formally, given a seed $s$, the pipeline produces:
+
+\begin{align}
+\textsc{Extract}(s;\, \branchCoherence,\, \phi_{\min},\, \hoplimit^*,\, \timedecay^*) &\to \{\chain_1, \dots, \chain_k\}, \\
+A(\chain) &= \max_{k \in \{\text{cat}, \text{cont}, \text{time}\}} \text{eCDF}_k\!\bigl[\textstyle\sum_{j} \mathcal{L}_{j,k}(\chain)\bigr], \\
+\text{Alert}(\chain) &= \mathbb{1}\!\bigl[A(\chain) > \theta\bigr].
+\end{align}
+
+That is, $\branchCoherence$ is used \emph{only} inside $\textsc{Extract}$ (for extraction, ranking, and pruning); $A(\chain)$ is the per-chain maliciousness score; $\text{Alert}$ is the final binary decision. We never use $\branchCoherence$ directly as a maliciousness score.
+
+Concretely:
 
 \begin{enumerate}
 \item For each loss component $k \in \{\text{cat}, \text{cont}, \text{time}\}$, collect the per-event loss distribution on benign validation chains.
 \item Build $\text{eCDF}_k$: raw loss $\mapsto$ percentile $\in [0, 1]$.
 \item For a test event: anomaly score $= \max(P_{\text{cat}}, P_{\text{cont}}, P_{\text{time}})$.
-\item Chain anomaly score $= \text{mean}_i (\text{event anomaly score}_i)$.
+\item $A(\chain) = \text{mean}_i (\text{event anomaly score}_i)$.
 \end{enumerate}
 
 We use the maximum over components rather than the sum because a temporally extreme but semantically normal event (e.g., a C2 beacon at an unusual interval) could be diluted in the sum. The maximum preserves the most sensitive anomaly dimension. The separation also enables interpretability: each alert can be tagged as triggered by a temporal, semantic, or structural anomaly.
 
-A chain is flagged as anomalous when its anomaly score exceeds the 99.9th percentile of the benign chain score distribution. Overlapping high-score chains that share nodes and are temporally proximate ($<60$s) are merged into complete attack paths.
+A chain is flagged as anomalous when $A(\chain) > \theta$, where $\theta$ is the 99.9th percentile of $A$ on the benign validation set. Overlapping high-score chains that share nodes and are temporally proximate ($<60$s) are merged into complete attack paths.
+
+This aggregation rule, like the eCDF mapping itself, is orthogonal to our coherence-metric contribution---any standard score-aggregation scheme over per-event losses could be substituted; we describe ours for reproducibility.

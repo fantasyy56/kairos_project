@@ -1,44 +1,62 @@
-% §2 Background and Motivation
+% Background and Problem Formulation
+\section{Background and Problem Formulation}
 \label{sec:background}
 
-\subsection{Provenance Graphs and APT Detection}
+\subsection{System Provenance Graphs}
 
-A provenance graph $\graph = (V, E)$ is a directed graph constructed from kernel-level audit logs. Each node $v \in V$ represents a system entity (process, file, or network socket), and each directed edge $e = (u \rightarrow v, t, \tau) \in E$ represents a causal system event where entity $u$ affected entity $v$ at timestamp $t$ via event type $\tau \in \{\text{FORK}, \text{EXEC}, \text{READ}, \text{WRITE}, \text{SENDTO}, \text{RECVFROM}, \dots\}$.
+A provenance graph $\graph=(V,E)$ is a directed graph constructed from kernel-level audit logs. Each node $v\in V$ represents a system entity, such as a process, file, or network connection. Each edge $e=(u\rightarrow v,t,\tau)\in E$ represents a kernel-mediated dependency event, where entity $u$ affects entity $v$ at time $t$ through event type $\tau$. Typical events include process creation, program execution, file reads and writes, and network sends and receives.
 
-Provenance graphs have two properties that make them powerful for intrusion detection. First, they are \emph{complete}: because the kernel mediates all system interactions, every causal relationship between system entities is recorded. Second, they are \emph{tamper-resistant}: the adversary cannot modify kernel-level audit logs without kernel-level access---at which point the system is already fully compromised.
+Provenance graphs are useful for APT detection because they preserve the dependency structure among system entities. Rather than asking only whether a time window or an entity is anomalous, provenance allows an analyst to ask a more investigation-oriented question: what caused a suspicious behavior, and what did it subsequently cause? The challenge is scale. The DARPA Transparent Computing E3 CADETS trace contains hundreds of thousands of nodes and nearly thirty million edges; unconstrained forward or backward tracing quickly absorbs unrelated benign activity.
 
-The scale of provenance data presents a fundamental challenge. The DARPA Transparent Computing E3 dataset, a standard benchmark, contains 268,242 nodes and 29,727,441 edges recorded over five days. Extracting meaningful attack signals from this volume requires principled filtering.
+\subsection{Chain-Level APT Detection}
+\label{sec:problem}
 
-\subsection{The Detection Granularity Gap}
+We define chain-level APT detection as follows. Given a provenance graph $\graph$ and a set of suspicious seed events, the detector outputs time-ordered event chains $\chain=[e_1,\ldots,e_n]$ that satisfy two requirements. First, the chain should be \emph{dependency-plausible}: adjacent events should be connected by audit-supported dependency evidence, not merely by temporal proximity or graph reachability. Second, the chain should be semantically unusual relative to benign system behavior, and thus worthy of analyst investigation.
 
-Existing PIDS operate at progressively finer granularities, forming a spectrum:
+This definition deliberately separates two tasks. \emph{Chain extraction} recovers structurally credible candidate chains; \emph{anomaly detection} determines whether those candidates deviate from the benign distribution. The former does not require attack labels and should not directly express maliciousness. The latter operates on the candidate chains produced by the former.
 
-\begin{itemize}
-\item \textbf{Graph-level} (Unicorn~\cite{unicorn2020}): classifies entire provenance graphs as benign or malicious.
-\item \textbf{Snapshot-level} (PROGRAPHER~\cite{yang2023prographer}): partitions the graph into temporal snapshots and classifies each snapshot.
-\item \textbf{Window-level} (KAIROS~\cite{cheng2024kairos}): scores events within 15-minute time windows and flags windows with high anomaly density.
-\item \textbf{Entity-level} (MAGIC~\cite{jia2024magic}, ThreaTrace~\cite{wang2022threatrace}): scores individual system entities (processes, files) as benign or malicious.
-\item \textbf{Edge-level} (EdgeTrace~\cite{edgetrace2025}): scores individual provenance edges as anomalous.
-\end{itemize}
+\subsection{Audit Model and Assumptions}
+\label{sec:audit_model}
 
-Each level answers a progressively finer-grained question, but none answers the question that matters most for investigation: \textbf{``Which sequence of causally-connected events constitutes the attack?''} We term this \emph{chain-level} detection.
+All claims about dependency evidence in this paper are scoped to the following audit model.
 
-\subsection{Limitations of Existing Chain Extraction}
+\paragraph{Trusted computing base.} We trust the operating-system kernel, its system-call mediation path, the audit subsystem, the audit-event collector, and persistent storage of audit records. User-space processes, application logs, and container user-space utilities are outside the TCB. Kernel compromise, audit-collector shutdown, and targeted audit-buffer overflow that silently drops events are out of scope.
 
-Recent work has begun applying Transformers to provenance graphs. While these methods represent important progress, their chain extraction strategies share a common limitation: they do not respect causal edge direction.
+\paragraph{Event coverage.} Table~\ref{tab:event_semantics} lists the main CADETS audit edge types used in this paper. Events outside the table are not interpreted as observable dependencies; in particular, shared memory, some \texttt{mmap}-based IPC, and signal-based IPC are out of model.
 
-\textbf{Fixed windows (EagleEye~\cite{eagleye2024}).} EagleEye segments the provenance graph into fixed-size time windows and linearizes events within each window into a sequence for Transformer classification. This approach has two flaws. First, a fixed window at time $T$ may contain events from unrelated processes that happen to co-occur---a Firefox page load and an SSH login may fall in the same window but share no causal relationship. Second, causally-connected events that span a window boundary are severed.
+\begin{table*}[t]
+\centering
+\caption{Audit-event semantics used in this work.}
+\label{tab:event_semantics}
+\small
+\begin{tabular}{llllll}
+\toprule
+Event type & Source & Target & Time semantic & Direction & Note \\
+\midrule
+EVENT\_EXECUTE & process & binary file & exec start & control/data & program image switch \\
+EVENT\_READ & file & process & syscall return & data in & no content or offset \\
+EVENT\_WRITE & process & file & syscall start & data out & append/offset may be missing \\
+EVENT\_FORK & parent process & child process & fork return & control/identity & child inherits parent state \\
+EVENT\_SENDTO & process & netflow & syscall start & data out & flow identifier only \\
+EVENT\_RECVFROM & netflow & process & syscall return & data in & flow identifier only \\
+EVENT\_OPEN & process & file & syscall return & state & resource access \\
+EVENT\_CLOSE & process & file & syscall return & state & resource release \\
+\bottomrule
+\end{tabular}
+\end{table*}
 
-\textbf{Random walks (Sentient~\cite{sentient2026}).} Sentient uses random walk-based scenario segmentation to extract subgraphs for its Graph Transformer. Random walks are inherently direction-agnostic: a walk may traverse a provenance edge in reverse, linking a process that reads a file to a process that wrote it without respecting the temporal order in which these events occurred.
+\paragraph{Entity identity.} Process identity is represented by $(pid,\text{creation\_time})$ to avoid PID reuse; crossing an \texttt{execve} boundary preserves the PID tuple but weakens identity continuity. File identity is represented by inode and mount identifier, with rename tracking; hard links are treated as the same entity. Socket identity uses the connection 5-tuple and audit object identifier. When thread identifiers are available, cross-thread links are explicitly down-weighted.
 
-\textbf{Temporal subgraphs (GET-AID~\cite{getaid2025}).} GET-AID constructs temporal subgraphs based on event timestamp proximity. While timestamps provide a weak signal, temporal proximity does not imply causal connection: two events occurring at the same time may belong to entirely independent process trees.
+\paragraph{Missing events.}
+\label{sec:audit_missing}
+We do not infer the content of missing events. If an event class is outside the audit model, or if an expected edge is missing inside a chain, the coherence score uses a smoothing floor $\phi_{\min}$ to avoid numerical collapse and a long-gap threshold $\tau_{\text{gap}}$ to prevent long silent intervals from being interpreted as valid dependency links.
 
-\textbf{Post-hoc reconstruction (SLOT~\cite{slot2025}, CAGE~\cite{cage2025}).} These methods first detect anomalous nodes or edges, then connect them into attack paths via clustering or causal weighting. The chain is an output of post-processing, not the detection unit itself. Critically, if the upstream detector misses a single critical node, the reconstructed chain is incomplete---and there is no mechanism to recover it.
+\paragraph{Out-of-model IPC.}
+\label{sec:audit_shm}
+Shared memory, implicit communication through \texttt{mmap}, signal-based IPC, and some anonymous-pipe cases lack sufficient semantics in the default CADETS event set. Attacks relying primarily on these channels may be missed; we discuss this scope limitation in \S\ref{sec:discussion}.
 
-\textbf{Rule-based extraction (SPARSE~\cite{sparse2024}, Holmes~\cite{holmes2019}).} These methods use expert-defined rules and threat intelligence to score and extract paths. They cannot detect novel attacks whose patterns fall outside the predefined rule set.
+\subsection{Research Challenges}
 
-\subsection{The Missing Mechanism}
+Chain-level detection faces three challenges. First, graph reachability over-approximates dependency causality: two events may be connected through a shared resource, but intervening third-party writes can break the actual dependency. Second, both attack chains and benign chains obey operating-system dependency structure, so structural coherence alone cannot imply maliciousness. Third, chain-level outputs require their own evaluation protocol, because conventional window- or node-level metrics do not measure whether an attack narrative has been recovered.
 
-All of the above methods share a fundamental approach: they first decide \emph{how to segment} the provenance graph (by time, by random walk, by rule), then rely on a downstream model to validate whether the segmentation was useful. No method first defines \emph{what properties make a chain causally coherent} and then extracts chains that satisfy those properties.
-
-This is the gap we fill. In \S\ref{sec:design}, we define a causal coherence metric that quantifies chain quality independent of any model, and design an extraction algorithm that maximizes this metric.
+The rest of the paper addresses these challenges. \S\ref{sec:method} tightens candidate chains using audit-supported coherence. \S\ref{sec:setup} defines the chain-level evaluation protocol. \S\ref{sec:evaluation} evaluates structural coherence, end-to-end detection, and complete narrative recovery.

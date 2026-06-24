@@ -1,45 +1,53 @@
-% §6 End-to-End Evaluation
+% Results
+\section{Results}
 \label{sec:evaluation}
 
-This section evaluates the full detection pipeline, including the autoregressive Transformer.
+This section reports results around four research questions: whether the chain coherence score is effective (RQ1), whether chain-level detection improves APT investigation (RQ2), how much each component contributes (RQ3), and whether the method generalizes and runs efficiently (RQ4).
 
-\subsection{Main Results: Chain-Level APT Detection}
+\subsection{RQ1: Is the Chain Coherence Score Effective?}
+\label{sec:metric}
 
-\textbf{Setup.} We train the autoregressive Transformer on benign chains extracted from days 2--4. We test on day 6 (attack day). All methods compared use the \emph{same} Transformer architecture and training procedure---only the chain/segment extraction strategy varies.
+RQ1 evaluates $\branchCoherence$ itself, without training or using the sequence model. The goal is to verify that the score measures audit-supported structural coherence rather than graph density, temporal proximity, or random reachability.
 
-\textbf{Baselines.} We compare against seven baselines representing the four chain extraction paradigms: (1) EagleEye-style fixed-size time windows; (2) Sentient-style random walk scenario segmentation; (3) GET-AID-style temporal subgraph partitioning; (4) SPARSE-style rule-based path scoring; (5) KAIROS window-level detection; (6) MAGIC entity-level detection; (7) SLOT post-hoc chain reconstruction.
+\paragraph{Benign-vs-random chain discrimination.} We extract chains from 100 TGN seeds on benign day 4, and compare them with random BFS chains constructed without direction or identity constraints.
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S5\_BENIGN\_RANDOM --- AUC and histogram for $\log\branchCoherence$ distinguishing benign and random chains. -->}\end{flushleft}
+Benign chains are expected to have higher $\log\branchCoherence$, while random chains should degrade toward the $\phi_{\min}$ floor due to direction violations, identity discontinuity, and long time gaps.
 
-\textbf{Metrics.} Chain-level Precision, Recall, and F1 (primary). AUC. Investigation Cost---the number of edges an analyst must examine to find all ground-truth attack edges, assuming edges are presented in descending anomaly score order.
+\paragraph{Negative-control validation.} We construct four perturbations: time shuffling, direction reversal, entity randomization, and resource-interleaving shuffling. Each preserves some surface statistics while breaking one audit-supported factor.
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S5\_NEGCTRL --- median $\log\branchCoherence$, IQR, and gap to benign median under four perturbations. -->}\end{flushleft}
+If all four perturbations significantly reduce the score, the metric is sensitive to temporal order, edge direction, entity identity, and resource-survival semantics.
 
-<!-- DATA_NEEDED: GAP_S6_MAIN — Chain-level F1 bar chart across all methods, full metrics table (P/R/F1/AUC/InvCost) -->
+\paragraph{Resource-survival goodness-of-fit.} For regular files, we report KS statistics and $\chi^2$ goodness-of-fit for the Poisson baseline; if the fit fails, we use a Kaplan--Meier empirical survival function estimated from benign data. For pipes, we report FIFO-violation rate. For sockets, we report the fraction of send/recv pairs lying within the same connection lifetime. For shared memory and ambiguous IPC, we report prevalence only because they are out of model.
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S5\_SURVIVAL --- per-resource-class fit statistics, edge fraction, and out-of-model event prevalence. -->}\end{flushleft}
 
-\textbf{Expected.} Our causal chain extraction achieves over 10\% absolute improvement in chain-level F1 over the next-best method. Investigation cost is reduced by more than 50$\times$ compared to KAIROS window-level detection.
+\paragraph{Long-lived-process false-link rate and sensitivity.} On benign day 4, we identify daemons with lifetime longer than one hour and sample intra-process event pairs at different $\Delta t$, reporting the fraction with $\phi_{\text{proc}}>0.5$. We also report sensitivity to $\phi_{\min}$, $\tau_{\text{gap}}$, and $\beta_p$.
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S5\_DAEMON / GAP\_S5\_SENSITIVITY --- daemon false-link rate and three hyperparameter sensitivity tables. -->}\end{flushleft}
 
-\subsection{Cross-Dataset Generalization}
+\subsection{RQ2: Does Chain-Level Detection Improve APT Investigation?}
 
-\textbf{Setup.} We apply the same pipeline to DARPA E5 (THEIA/Trace). The calibration protocol is re-run from scratch on E5 benign data (protocol unchanged, parameters auto-adapt). The TGN and Transformer are retrained on E5 benign chains.
+\paragraph{Main detection results.} We train the sequence model on benign chains from days 2--4 and test on the day-6 attack. All sequence-based baselines use the same Transformer architecture and training procedure; only the chain or segment construction strategy changes, isolating the contribution of causal-chain extraction.
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S6\_MAIN --- Edge-IoU, attack-node recall, and investigation cost across all methods at Top-$K\in\{10,50,100\}$. -->}\end{flushleft}
+We expect the proposed method to achieve higher chain-level Edge-IoU and node recall than window-level, entity-level, and post-hoc reconstruction baselines, while reducing the number of edges/nodes analysts must inspect to recover a complete attack narrative.
 
-<!-- DATA_NEEDED: GAP_S6_CROSS — Side-by-side elbow curves for E3 vs E5, table of discovered parameters, chain-level F1 on both -->
+\paragraph{Seed-recall decomposition.} To avoid conflating seed-scorer quality with chain-extractor quality, we report
+\[
+\mathrm{Recall}_{\text{end-to-end}} = \mathrm{Recall}_{\text{seed}} \times \mathrm{Recall}_{\text{chain}\mid\text{seed-covered}}.
+\]
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S6\_SEEDRECALL --- seed recall, conditional chain-layer recall, and their product. -->}\end{flushleft}
 
-\textbf{Expected.} The calibration protocol discovers different $\hoplimit^*$ values for E3 and E5 (demonstrating OS-specific adaptation), but chain-level F1 is consistently high on both (demonstrating generality).
+\paragraph{Attack narrative recovery.} On the nginx exploit case, we label ground-truth attack edges by stage---entry, persistence, lateral movement, and exfiltration---and measure how many top-ranked predicted chains must be merged to cover all stages.
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S6\_CAN --- stage-coverage curve as a function of merged-chain count, compared with KAIROS/MAGIC baselines. -->}\end{flushleft}
 
-\subsection{Ablation Study}
+\subsection{RQ3: How Much Does Each Component Contribute?}
 
-We perform six ablations to isolate the contribution of each design component:
+We ablate three groups of components. Extractor ablations include removing causal direction enforcement, replacing the mean-log score with an arithmetic mean, removing branch-weighted refinement, and disabling $g_{\text{lifetime}}$ and $\beta_p$ inside $\phi_{\text{proc}}$. Feature/model ablations remove global node statistics, remove sinusoidal time encoding, or replace the Transformer with an LSTM or MLP. Anchor-sampling ablations compare C-random-only, C-seed-only, and the default C-mixture setting.
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S6\_ABLATION --- ablation bar charts and per-item metric table. -->}\end{flushleft}
 
-\begin{enumerate}
-\item \textbf{Remove causal direction enforcement:} Replace causal tracing with undirected BFS. Expected: largest F1 drop---proves causal direction matters.
-\item \textbf{Remove TGN temporal memory:} Replace with static edge features for seed selection. Expected: moderate drop---proves TGN temporal state is valuable.
-\item \textbf{Remove Branch-Weighted Coherence:} Use $\chainCoherence$ only. Expected: precision drop from high-branching benign processes (Firefox, compilation).
-\item \textbf{Remove Node Profiler:} Use KAIROS raw features only. Expected: moderate drop.
-\item \textbf{Remove sinusoidal time encoding:} Replace with scalar $\timegap$. Expected: minor drop---but proves multi-scale timing value.
-\item \textbf{Replace Transformer with LSTM and MLP:} Expected: LSTM close, MLP worse---justifies Transformer choice.
-\end{enumerate}
+\subsection{RQ4: Does the Method Generalize and Run Efficiently?}
 
-<!-- DATA_NEEDED: GAP_S6_ABLATION — Ablation bar chart, per-ablation metrics table -->
+\paragraph{Cross-engagement generalization.} We apply the same protocol to DARPA E5. Calibration, training, and testing remain unchanged; only the parameters are rediscovered on E5 benign data.
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S6\_CROSS --- E3/E5 calibration curves, discovered parameters, and chain-level metrics. -->}\end{flushleft}
+We expect different engagements to produce different $\hoplimit^*$, $\tau_{\text{gap}}$, and resource-survival parameters, while maintaining stable chain-level performance.
 
-\subsection{Efficiency Analysis}
-
-<!-- DATA_NEEDED: GAP_S6_EFFICIENCY — Latency breakdown per component, memory analysis, throughput comparison -->
-
-The processing of one day of DARPA E3 data ($\sim$5M events) takes approximately 10 minutes: TGN inference dominates at $\sim$8 minutes, chain extraction adds $\sim$2 minutes (CPU), and Transformer inference completes in under one second. This represents a 144$\times$ throughput multiplier over real-time. Compared to KAIROS, our method adds less than 20\% overhead.
+\paragraph{Efficiency.} In the current implementation, processing one E3 day with about $5$M events is dominated by seed scoring. Chain extraction is an incremental CPU-side cost, and sequence-model inference after extraction is nearly immediate.
+\begin{flushleft}\small\texttt{<!-- DATA\_NEEDED: GAP\_S6\_EFFICIENCY --- per-component latency, memory footprint, and throughput comparison. -->}\end{flushleft}

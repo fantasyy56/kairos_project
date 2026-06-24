@@ -1,48 +1,39 @@
-% §5 Metric Validation (Model-Free)
-\label{sec:metric}
+% Experimental Setup
+\section{Experimental Setup}
+\label{sec:setup}
 
-This section validates the Causal Coherence Metric independently of any model training. All experiments in this section are model-free---no Transformer is used.
+This section describes datasets, baselines, evaluation metrics, and implementation details. Results are reported in \S\ref{sec:evaluation}.
 
-\subsection{Experimental Setup}
+\subsection{Datasets and Splits}
 
-We use the DARPA Transparent Computing E3 (CADETS) dataset: 268,242 nodes, 29,727,441 edges over five days. Days 2--4 (April 2--4) serve as benign data for calibration. Day 6 (April 6) contains the ground-truth attack (nginx exploit chain). Ground-truth labels for attack nodes follow the MAGIC/ThreaTrace annotations. Parameter calibration is performed on days 2--3; day 4 is held out for benign evaluation.
+We use the DARPA Transparent Computing dataset. The main experiments use the E3 CADETS engagement, and cross-engagement experiments use E5 THEIA/Trace. The E3 trace contains approximately 268{,}242 nodes and 29{,}727{,}441 edges over five days of system activity. Following prior PIDS work, days 2--4 are treated as benign: days 2--3 are used for parameter calibration and model training, and day 4 is held out as benign validation data. Day 6 contains the ground-truth attack and is used for testing. Attack labels follow the DARPA TC annotations used by MAGIC and ThreaTrace.
 
-\subsection{Benign vs. Random Chain Discrimination}
+\subsection{Baselines}
 
-\textbf{Claim:} $\branchCoherence$ separates causally-coherent chains from randomly constructed chains with high discriminative power.
+We compare against baselines that cover different detection granularities and chain-construction strategies:
+\begin{itemize}
+\item \textbf{Window-level methods:} KAIROS~\cite{cheng2024kairos} and an EagleEye-style fixed-window sequence baseline.
+\item \textbf{Entity/edge-level methods:} MAGIC~\cite{jia2024magic}, ThreaTrace~\cite{wang2022threatrace}, and an EdgeTrace-style edge scorer~\cite{edgetrace2025}.
+\item \textbf{Sequence/subgraph methods:} Sentient-style random-walk segmentation~\cite{sentient2026} and GET-AID-style temporal-subgraph segmentation~\cite{getaid2025}.
+\item \textbf{Path-reconstruction methods:} SPARSE/Holmes-style rule tracing~\cite{sparse2024,holmes2019} and SLOT-style post-hoc chain reconstruction~\cite{slot2025}.
+\end{itemize}
 
-\textbf{Setup.} We extract chains from 100 TGN seeds on day 4 (benign). Random chains are constructed by sampling random provenance edges as pseudo-seeds and performing undirected BFS without causal direction enforcement. For both sets, we compute $\branchCoherence$ without any model training.
+For baselines that do not directly output chains, we construct candidate chains around their flagged windows, nodes, or edges using 1--2 hop directed BFS, and choose the setting that is more favorable to the baseline. This adaptation biases the comparison toward baselines; any remaining gap therefore reflects chain-construction quality rather than the matching convention.
 
-<!-- DATA_NEEDED: GAP_S5_BENIGN_RANDOM — AUC of Φ_bw classifying benign vs random chains, histogram figure -->
+\subsection{Evaluation Metrics}
+\label{sec:eval:metrics}
 
-\textbf{Expected.} $\branchCoherence$ achieves AUC $> 0.85$ in separating benign from random chains. Benign chains exhibit high coherence (genuine system causality), while random chains exhibit low coherence (events are not causally connected). This validates that the metric captures causal structure without any model training.
+We report results at three levels.
+\begin{itemize}
+\item \textbf{Dependency-plausible chains (DPC).} This level evaluates whether a chain is structurally supported by audit evidence. Metrics include the discriminative power of $\log\branchCoherence$ between benign and random chains, degradation under negative-control perturbations, and resource-survival goodness-of-fit.
+\item \textbf{Attack-relevant chains (ARC).} This level evaluates overlap between predicted chains and attack ground truth. The primary metric is Edge-IoU: for each predicted chain $C_p$, we compute $\max_g \mathrm{IoU}(E(C_p),E(C_g))$. We also report attack-node recall and temporal overlap.
+\item \textbf{Complete attack narratives (CAN).} This level evaluates how many top-ranked chains an analyst must inspect to cover attack stages such as entry, persistence, lateral movement, and exfiltration. This metric directly captures investigation cost.
+\end{itemize}
 
-\subsection{Elbow Detection Validation}
+In addition to chain-level metrics, we report Top-$K$ results for $K\in\{10,50,100\}$, and measure per-component runtime, throughput, and memory use.
 
-\textbf{Claim:} The $\chainCoherence$ vs.~$\hoplimit$ curve exhibits a detectable elbow, and the elbow point produces optimal extraction.
+\subsection{Implementation Details}
 
-\textbf{Setup.} We extract chains from 100 benign TGN seeds. For each $\hoplimit \in \{1..10\}$, we re-extract chains from the same seeds and compute mean $\chainCoherence$. We identify $\hoplimit^*$ as the point of maximum negative second derivative.
+The current implementation uses the pretrained TGN reconstruction loss from KAIROS as the edge-level seed score. Edges whose loss exceeds the 95th percentile of the benign distribution are used as seeds. Chain-extraction parameters $\hoplimit^*$, $\timedecay^*$, $\graphdecay^*$, $\branchpenalty^*$, $\phi_{\min}$, $\tau_{\text{gap}}$, and $\beta_p$ are calibrated only on benign data.
 
-<!-- DATA_NEEDED: GAP_S5_ELBOW — Φ vs δ curve plot with elbow annotation, chain quality comparison at δ* vs δ=1 vs δ=10 -->
-
-\textbf{Expected.} A clear elbow emerges at $\hoplimit^* \approx 2$--$3$. Chains extracted at $\hoplimit^*$ are more complete than those at $\hoplimit=1$ (which miss causal context) and less noisy than those at $\hoplimit=10$ (which pull in unrelated events).
-
-\subsection{Attack Chain Case Study}
-
-\textbf{Claim:} Ground-truth attack chains exhibit high $\branchCoherence$, demonstrating that attacks obey operating system physics despite being semantically malicious.
-
-\textbf{Setup.} We extract chains from TGN seeds on day 6 (attack day). We inspect $\branchCoherence$ for chains that contain ground-truth attack nodes.
-
-<!-- DATA_NEEDED: GAP_S5_ATTACK — Table of Φ_bw scores for attack chains vs top benign chains -->
-
-\textbf{Expected.} Attack chains have $\branchCoherence$ comparable to benign chains. This confirms the separation of concerns: the coherence metric measures causal integrity (both attack and benign chains are causally coherent), while the Transformer's role is to identify semantic anomalies.
-
-\subsection{Comparison with Rule-Based Extraction}
-
-\textbf{Claim:} $\branchCoherence$ applied to rule-based extraction output (Holmes) yields lower scores than our causally-extracted chains.
-
-\textbf{Setup.} We apply Holmes-style rule-based forward/backward tracing from the same TGN seeds and compute $\branchCoherence$ for the resulting paths.
-
-<!-- DATA_NEEDED: GAP_S5_HOLMES — Table comparing Φ_bw(Ours) vs Φ_bw(Holmes) vs Φ_bw(Random) -->
-
-\textbf{Expected.} $\branchCoherence(\text{Ours}) > \branchCoherence(\text{Holmes}) > \branchCoherence(\text{Random})$, demonstrating that learned seed selection and causal-direction-respecting extraction produce tighter chains than rule-based alternatives.
+The sequence model is a 3-layer Transformer encoder with hidden dimension 128 and 4 attention heads, trained autoregressively for next-event prediction. Training chains are generated from a 50\%/50\% mixture of uniform random anchors and benign high-loss anchors, balancing broad benign coverage with online covariate matching. The final anomaly score $A(\chain)$ is calibrated by empirical CDFs of loss components on the benign validation set; the alert threshold is the 99.9th percentile of the benign validation distribution.

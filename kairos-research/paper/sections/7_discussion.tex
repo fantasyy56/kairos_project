@@ -1,22 +1,27 @@
-% §7 Discussion
+% Discussion
+\section{Discussion}
 \label{sec:discussion}
 
-\subsection{Deployment Model}
+\subsection{Scope and Deployment Model}
 
-Our system is designed as an \textbf{asynchronous out-of-band (OOB) detector}, not an inline real-time blocker. It operates on a 60-second tumbling window: events accumulate in a sliding graph buffer, the TGN processes them in contiguous GPU-friendly blocks, and chain extraction with Transformer inference is triggered lazily only when an edge exceeds the anomaly threshold. Detection latency is approximately 2 seconds after window close---negligible for APT campaigns that unfold over hours or days, and a deliberate trade-off for maximizing GPU throughput. The graph buffer is bounded by a configurable time window (default 15 minutes, matching KAIROS), ensuring memory stability regardless of system uptime.
+The proposed system is designed for asynchronous out-of-band detection rather than inline blocking. It processes audit events in a sliding graph buffer: the edge-level seed scorer first identifies events worth investigating, and chain extraction plus sequence-model inference runs only when a seed is triggered. This design is appropriate for APT investigation, where campaigns unfold over hours or days; it trades millisecond-level blocking for higher throughput and interpretable chain-level outputs.
 
-We evaluate in batch per-day mode to ensure apples-to-apples comparison with KAIROS, MAGIC, and other baselines that share this evaluation convention. The micro-batch streaming architecture is described here as a deployment consideration, not as an evaluated claim.
+Our evaluation uses per-day batch processing to remain comparable with prior PIDS work. In deployment, the same pipeline can be implemented as micro-batch streaming. As long as audit events enter the graph buffer in temporal order, the chain extractor and eCDF calibration mechanism remain unchanged.
 
 \subsection{Limitations}
 
-\textbf{Single attack type in E3.} The DARPA E3 dataset contains one primary attack scenario (nginx exploit chain). While our E5 cross-dataset experiment provides additional attack diversity, both datasets originate from the same DARPA program. Evaluation on a broader range of APT campaigns (e.g., OpTC, or custom Caldera-based testbeds) is needed to establish generalizability.
+\textbf{$\branchCoherence$ is not a maliciousness score.} It measures whether a chain has audit-supported structural coherence, not whether the chain is malicious. Both benign and attack chains can be highly coherent; maliciousness is determined by the sequence model's anomaly score $A(\chain)$. The negative-control and sensitivity experiments in \S\ref{sec:metric} validate that the score captures structural properties, but we do not interpret it as a calibrated probability.
 
-\textbf{Benign training assumption.} We assume the training data (days 2--4) is attack-free. This assumption is standard in provenance-based intrusion detection---KAIROS, MAGIC, and UNICORN all make it---but may not hold in all real-world deployments.
+\textbf{Recall is bounded by the seed scorer.} Chain extraction is triggered by seed edges. If an attack step is never surfaced by the seed scorer, the downstream extractor cannot recover it. We therefore report seed recall and chain-layer conditional recall separately, avoiding attribution of seed-scorer quality to the chain extractor.
 
-\textbf{Structural Sparsity Prior.} The branch-weighted coherence penalty assumes attack chains are structurally sparse. While this holds for targeted APT campaigns (which typically maintain a narrow, linear attack footprint), it may not hold for ransomware or worm-style attacks that fan out to many processes. These attack types require different detection paradigms.
+\textbf{Path representation limits branched campaigns.} The current scoring object is a seed-centric linearized path; multiple alerts are merged into an analyst-facing investigation graph only after scoring. This is suitable for sparse, multi-stage APTs, but less natural for ransomware, worms, or mass scanning. Native DAG scoring is a direct extension.
 
-\textbf{No formal theorem.} The existence of an elbow in the $\chainCoherence$ vs.~$\hoplimit$ curve is empirically demonstrated but not formally proven. A rigorous treatment using the causal structure of operating system process trees (bounded depth, convergence to PID 1) would strengthen the theoretical contribution.
+\textbf{Out-of-model communication channels.} Shared memory, some \texttt{mmap}-based IPC, and signal-based IPC are outside the default audit model. Attacks relying primarily on these channels may be missed; handling them requires stronger audit instrumentation or additional runtime monitoring.
+
+\textbf{Benign training assumption.} We assume the training data is attack-free, which is standard in provenance anomaly detection. In real deployments, this assumption can be relaxed with robust statistics, coarse contamination filtering, or analyst-confirmed benign windows.
+
+\textbf{Cross-engagement, not full cross-platform generalization.} DARPA E3 and E5 come from the same program. Although they exercise different scenarios, their audit infrastructure is similar. Our results therefore establish cross-engagement adaptation, not full cross-OS or cross-audit-framework generalization.
 
 \subsection{Future Work}
 
-Extending the system to streaming evaluation with live audit log integration (eBPF or LSM hooks) is a natural next step. The causal coherence framework could also be formalized within Pearl's do-calculus, providing theoretical guarantees on chain recovery probability. Multi-host provenance integration would enable detection of cross-machine lateral movement chains.
+Future work includes four directions. First, extending the current batch implementation to live audit-log streaming. Second, designing dependency-causality-aware seed scorers to reduce reliance on a generic TGN reconstruction loss. Third, extending $\branchCoherence$ from linear paths to native DAG scoring, which would better capture branched attacks. Fourth, integrating multi-host provenance; in that setting, dependencies are no longer fully mediated by a single host kernel, and the audit model must be extended accordingly.

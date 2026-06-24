@@ -1,44 +1,62 @@
-% §2 背景与动机
+% 背景与问题定义
+\section{背景与问题定义}
 \label{sec:background}
 
-\subsection{溯源图与APT检测}
+\subsection{系统溯源图}
 
-溯源图 $\graph = (V, E)$ 是由内核级审计日志构建的有向图。每个节点 $v \in V$ 代表一个系统实体（进程、文件或网络套接字），每条有向边 $e = (u \rightarrow v, t, \tau) \in E$ 代表一个因果系统事件——实体 $u$ 在时间戳 $t$ 通过事件类型 $\tau \in \{\text{FORK}, \text{EXEC}, \text{READ}, \text{WRITE}, \text{SENDTO}, \text{RECVFROM}, \dots\}$ 影响了实体 $v$。
+溯源图 $\graph=(V,E)$ 是由内核级审计日志构建的有向图。节点 $v\in V$ 表示系统实体，如进程、文件或网络连接；边 $e=(u\rightarrow v,t,\tau)\in E$ 表示实体 $u$ 在时间 $t$ 通过事件类型 $\tau$ 对实体 $v$ 产生的内核中介依赖。典型事件包括进程派生、程序执行、文件读写和网络收发。
 
-溯源图具备两个使其在入侵检测中格外强大的特性。第一，它们是\emph{完备的}：由于内核调解所有系统交互，系统实体之间的每个因果关系都被记录下来。第二，它们是\emph{防篡改的}：攻击者无法在未获得内核级访问权限的情况下修改内核级审计日志——而一旦获得内核级访问，系统已经彻底沦陷。
+溯源图适合 APT 检测，是因为它保留了系统实体之间的依赖结构。相比只判断某个时间窗口或某个实体是否异常，溯源图允许分析员追问一个更贴近调查的问题：某个可疑行为由什么导致，又导致了什么后续行为？但溯源图规模很大。例如 DARPA Transparent Computing E3 CADETS 数据包含数十万节点和近三千万条边；不加约束的前向或后向追踪会迅速引入大量良性事件。
 
-溯源数据的规模带来了根本性挑战。DARPA透明计算E3数据集（一个标准基准）包含268,242个节点和29,727,441条边，跨越五天。从这样的体量中提取有意义的攻击信号需要有原则的过滤。
+\subsection{链级 APT 检测问题}
+\label{sec:problem}
 
-\subsection{检测粒度鸿沟}
+我们将链级 APT 检测定义为：给定溯源图 $\graph$ 和一组可疑种子事件，输出若干按时间排序的事件链 $\chain=[e_1,\ldots,e_n]$，使其同时满足两类要求。第一，链在结构上应当是\emph{依赖合理的}，即相邻事件之间存在审计支撑的依赖证据，而不是仅因时间接近或图上可达而被连接。第二，链在语义上应当相对良性系统行为表现异常，从而值得分析员进一步调查。
 
-已有PIDS在逐步细化的粒度上运行，形成一个谱系：
+这一定义刻意把两个任务分开：\emph{链提取}负责恢复结构合理的候选链，\emph{异常检测}负责判断这些候选链是否偏离良性行为分布。前者不需要攻击标签，也不应直接表达恶意性；后者建立在前者输出的候选链之上。
 
-\begin{itemize}
-\item \textbf{图级} (Unicorn~\cite{unicorn2020})：将整个溯源图分类为良性或恶意。
-\item \textbf{快照级} (PROGRAPHER~\cite{yang2023prographer})：将图划分为时序快照并对每个快照进行分类。
-\item \textbf{窗口级} (KAIROS~\cite{cheng2024kairos})：在15分钟时间窗口内对事件评分，标记异常密度高的窗口。
-\item \textbf{实体级} (MAGIC~\cite{jia2024magic}, ThreaTrace~\cite{wang2022threatrace})：对单个系统实体（进程、文件）评分。
-\item \textbf{边级} (EdgeTrace~\cite{edgetrace2025})：对单条溯源边进行异常评分。
-\end{itemize}
+\subsection{审计模型与假设}
+\label{sec:audit_model}
 
-每个级别回答了一个逐步细化的问题，但没有人回答对调查最重要的那个问题：\textbf{“哪条因果相连的事件序列构成了攻击？”} 我们称之为\emph{链级}检测。
+本文所有关于依赖证据的论断都限定在以下审计模型内。
 
-\subsection{已有链提取方法的局限性}
+\paragraph{可信计算基。}我们信任操作系统内核、系统调用中介路径、审计子系统、审计事件采集器以及持久化存储。用户态进程、应用日志和容器用户态工具不在可信计算基内。内核攻陷、审计采集器被关闭、或有针对性的审计缓冲区溢出不在本文威胁模型内。
 
-近期的工作已经开始将Transformer应用于溯源图。尽管这些方法代表了重要进展，但它们的链提取策略共享一个共同的局限性：不尊重因果边方向。
+\paragraph{事件覆盖。}表~\ref{tab:event_semantics} 列出本文使用的主要 CADETS 审计边类型。表外事件不被解释为可观测依赖，尤其是共享内存、部分 \texttt{mmap} IPC 和信号 IPC。
 
-\textbf{固定窗口 (EagleEye~\cite{eagleeye2024})。} EagleEye将溯源图分割为固定大小的时间窗口，并将每个窗口内的事件线性化为Transformer分类的序列。该方法有两个缺陷。首先，时间$T$处的固定窗口可能包含恰好同时发生的、来自不相关进程的事件——Firefox页面加载和SSH登录可能落入同一窗口但毫无因果关系。其次，跨越窗口边界的因果相连事件被切断。
+\begin{table*}[t]
+\centering
+\caption{本文采用的审计事件语义}
+\label{tab:event_semantics}
+\small
+\begin{tabular}{llllll}
+\toprule
+事件类型 & 源实体 & 目标实体 & 时间语义 & 依赖方向 & 说明 \\
+\midrule
+EVENT\_EXECUTE & 进程 & 二进制文件 & exec 开始 & 控制/数据 & 程序映像切换 \\
+EVENT\_READ & 文件 & 进程 & syscall 返回 & 数据流入 & 无内容与偏移 \\
+EVENT\_WRITE & 进程 & 文件 & syscall 开始 & 数据流出 & append/offset 可能缺失 \\
+EVENT\_FORK & 父进程 & 子进程 & fork 返回 & 控制/身份 & 子进程继承父态 \\
+EVENT\_SENDTO & 进程 & netflow & syscall 开始 & 数据流出 & 仅 flow 标识 \\
+EVENT\_RECVFROM & netflow & 进程 & syscall 返回 & 数据流入 & 仅 flow 标识 \\
+EVENT\_OPEN & 进程 & 文件 & syscall 返回 & 状态 & 资源访问 \\
+EVENT\_CLOSE & 进程 & 文件 & syscall 返回 & 状态 & 资源释放 \\
+\bottomrule
+\end{tabular}
+\end{table*}
 
-\textbf{随机游走 (Sentient~\cite{sentient2026})。} Sentient使用基于随机游走的场景分割来为Graph Transformer提取子图。随机游走在本质上是方向无关的：一次游走可能沿逆向遍历溯源边，将读取文件的过程与写入文件的过程连接起来，而不尊重这些事件发生的时间顺序。
+\paragraph{实体身份。}进程身份采用 $(pid,\text{creation\_time})$，以避免 PID 复用；跨 \texttt{execve} 时保留 PID 元组但降低身份连续性。文件身份采用 inode 与挂载点组合，并跟踪 rename；硬链接视为同一实体。套接字身份采用连接五元组及审计对象标识。若审计系统记录线程 ID，跨线程连接会被显式降权。
 
-\textbf{时序子图 (GET-AID~\cite{getaid2025})。} GET-AID基于事件时间戳的接近程度构造时序子图。虽然时间戳提供了一个弱信号，但时间接近并不意味因果连接：两个同时发生的事件可能属于完全独立的进程树。
+\paragraph{缺失事件。}
+\label{sec:audit_missing}
+我们不尝试推断缺失事件的具体内容。若某类事件在审计模型之外，或某条链中预期边缺失，则链一致性评分使用平滑下限 $\phi_{\min}$ 避免数值塌缩，并通过长间隔切链阈值 $\tau_{\text{gap}}$ 阻止长时间空白被解释为有效依赖。
 
-\textbf{后处理重建 (SLOT~\cite{slot2025}, CAGE~\cite{cage2025})。} 这些方法首先检测异常节点或边，然后通过聚类或因果加权将它们连接成攻击路径。链是后处理的产出物，而非检测单元本身。关键的是，如果上游检测器漏掉单个关键节点，重建的链就不完整——且没有机制可以恢复它。
+\paragraph{模型外 IPC。}
+\label{sec:audit_shm}
+共享内存、基于 \texttt{mmap} 的隐式通信、信号 IPC 以及部分匿名管道情形在默认 CADETS 事件集中缺少充分语义。主要依赖这些通道的攻击可能被本文方法漏检；我们在 \S\ref{sec:discussion} 将其作为适用范围限制讨论。
 
-\textbf{基于规则的提取 (SPARSE~\cite{sparse2024}, Holmes~\cite{holmes2019})。} 这些方法使用专家定义的规则和威胁情报对路径进行评分和提取。它们无法检测其模式不在预定义规则集内的新型攻击。
+\subsection{研究挑战}
 
-\subsection{缺失的机制}
+链级检测面临三个挑战。第一，图上可达性是依赖因果的过近似：两个事件可经共享资源相连，但中间第三方写入可能打断真实依赖。第二，攻击链和良性链都服从操作系统依赖结构，因此结构一致性本身不能等同于恶意性。第三，链级输出需要新的评价协议，因为传统窗口级或节点级指标无法直接衡量攻击叙事是否被恢复。
 
-所有上述方法共享一个基本做法：首先决定\emph{如何分割}溯源图（按时间、按随机游走、按规则），然后依赖下游模型来验证分割是否有用。没有方法首先定义\emph{什么属性使一条链因果相干}，然后提取满足这些属性的链。
-
-这是我们要填补的缺口。在\S\ref{sec:design}中，我们定义了一个量化链质量的因果相干性度量（独立于任何模型），并设计了一个最大化该度量的提取算法。
+本文方法围绕这三个挑战展开：\S\ref{sec:method} 用审计支撑的一致性评分收紧候选链；\S\ref{sec:setup} 定义链级评价协议；\S\ref{sec:evaluation} 分别评估结构一致性、端到端检测和完整攻击叙事恢复。

@@ -1,48 +1,39 @@
-% §5 度量验证（模型无关）
-\label{sec:metric}
+% 实验设置
+\section{实验设置}
+\label{sec:setup}
 
-本节在独立于任何模型训练的情况下验证因果相干性度量。本节中的所有实验都是模型无关的——不使用Transformer。
+本节描述数据集、对比方法、评价指标和实现细节。实验结果在 \S\ref{sec:evaluation} 中报告。
 
-\subsection{实验设置}
+\subsection{数据集与划分}
 
-我们使用DARPA透明计算E3（CADETS）数据集：268,242个节点，29,727,441条边，跨越五天。第2--4天（4月2--4日）作为校准用的良性数据。第6天（4月6日）包含真实攻击（nginx漏洞利用链）。攻击节点的真实标签遵循MAGIC/ThreaTrace标注。参数校准在第2--3天进行；第4天留出用于良性评估。
+我们使用 DARPA Transparent Computing 数据集，主要实验基于 E3 CADETS engagement，跨 engagement 实验使用 E5 THEIA/Trace。E3 数据包含约 268{,}242 个节点和 29{,}727{,}441 条边，覆盖五天系统活动。按照既有 PIDS 工作的设置，第 2--4 天作为良性数据：其中第 2--3 天用于参数校准和模型训练，第 4 天作为良性验证集；第 6 天包含 ground-truth 攻击，用于测试。攻击标签遵循 MAGIC/ThreaTrace 等工作使用的 DARPA TC 标注。
 
-\subsection{良性链与随机链判别}
+\subsection{对比方法}
 
-\textbf{声明：} $\branchCoherence$能以高判别力分离因果相干的链与随机构造的链。
+我们选择覆盖不同检测粒度和链构造策略的 baseline：
+\begin{itemize}
+\item \textbf{窗口级方法：}KAIROS~\cite{cheng2024kairos} 及 EagleEye 风格固定时间窗口。
+\item \textbf{实体/边级方法：}MAGIC~\cite{jia2024magic}、ThreaTrace~\cite{wang2022threatrace} 与 EdgeTrace 风格边级评分~\cite{edgetrace2025}。
+\item \textbf{序列/子图方法：}Sentient 风格随机游走分割~\cite{sentient2026} 与 GET-AID 风格时序子图分割~\cite{getaid2025}。
+\item \textbf{路径重建方法：}SPARSE/Holmes 风格规则追踪~\cite{sparse2024,holmes2019} 与 SLOT 风格后处理链重建~\cite{slot2025}。
+\end{itemize}
 
-\textbf{设置。} 我们从第4天（良性）的100个TGN种子中提取链。随机链通过采样随机溯源边作为伪种子并进行无向BFS（不强制因果方向）来构造。对两组链，我们在没有任何模型训练的情况下计算$\branchCoherence$。
+为公平比较，凡 baseline 不直接输出链的，我们在其标记窗口、节点或边周围执行 1--2 跳有向 BFS 构造候选链，并选择对 ground truth 更有利的设置。这一适配偏向 baseline，因此剩余差距主要反映链构造质量。
 
-<!-- DATA_NEEDED: GAP_S5_BENIGN_RANDOM — Φ_bw分类良性与随机链的AUC，直方图 -->
+\subsection{评价指标}
+\label{sec:eval:metrics}
 
-\textbf{预期。} $\branchCoherence$在分离良性与随机链上达到AUC $> 0.85$。良性链展现出高相干性（真实的系统因果），而随机链展现出低相干性（事件没有因果连接）。这验证了度量在没有任何模型训练的情况下捕获了因果结构。
+我们按三层报告链级结果。
+\begin{itemize}
+\item \textbf{依赖合理链（DPC）。}用于评估链结构是否由审计证据支撑。主要指标包括良性链与随机链的 $\log\branchCoherence$ 区分能力、负控制扰动下的分数退化，以及资源存活模型拟合优度。
+\item \textbf{攻击相关链（ARC）。}用于评估预测链与攻击 ground truth 的重叠。主指标为 Edge-IoU：对每条预测链 $C_p$ 计算 $\max_g \mathrm{IoU}(E(C_p),E(C_g))$。同时报告攻击节点召回和时间重叠。
+\item \textbf{完整攻击叙事（CAN）。}用于评估分析员需要检查多少 top-ranked 链才能覆盖入口、持久化、横向移动和外传等攻击阶段。该指标直接对应调查成本。
+\end{itemize}
 
-\subsection{肘部检测验证}
+除链级指标外，我们报告 Top-$K$ 结果，其中 $K\in\{10,50,100\}$，并报告逐组件运行时间、吞吐和内存占用。
 
-\textbf{声明：} $\chainCoherence$ vs.~$\hoplimit$曲线展现出可检测的肘部，且肘部点产生最优提取。
+\subsection{实现细节}
 
-\textbf{设置。} 我们从100个良性TGN种子中提取链。对每个$\hoplimit \in \{1..10\}$，从相同种子重新提取链并计算均值$\chainCoherence$。我们将$\hoplimit^*$识别为最大负二阶导数点。
+当前实现使用 KAIROS 的预训练 TGN 重构损失作为边级种子分数；损失超过良性分布第 95 百分位的边作为种子。链提取参数 $\hoplimit^*$、$\timedecay^*$、$\graphdecay^*$、$\branchpenalty^*$、$\phi_{\min}$、$\tau_{\text{gap}}$ 和 $\beta_p$ 均只在良性数据上校准。
 
-<!-- DATA_NEEDED: GAP_S5_ELBOW — Φ vs δ曲线图配肘部标注，δ*处与δ=1和δ=10的链质量对比 -->
-
-\textbf{预期。} 在$\hoplimit^* \approx 2$--$3$处出现清晰肘部。$\hoplimit^*$处提取的链比$\hoplimit=1$处（缺少因果上下文）更完整，比$\hoplimit=10$处（拉入无关事件）噪声更少。
-
-\subsection{攻击链案例研究}
-
-\textbf{声明：} 真实攻击链展现出高$\branchCoherence$，表明尽管攻击在语义上是恶意的，但遵守操作系统的物理规律。
-
-\textbf{设置。} 我们从第6天（攻击日）的TGN种子中提取链。检查包含真实攻击节点的链的$\branchCoherence$。
-
-<!-- DATA_NEEDED: GAP_S5_ATTACK — 攻击链与top良性链的Φ_bw分数对比表 -->
-
-\textbf{预期。} 攻击链具有与良性链可比的$\branchCoherence$。这确认了关注点分离：相干性度量衡量因果完整性（攻击链和良性链都是因果相干的），而Transformer的角色是识别语义异常。
-
-\subsection{与基于规则提取的对比}
-
-\textbf{声明：} 对基于规则提取输出（Holmes）应用$\branchCoherence$得到比我们因果提取的链更低的分数。
-
-\textbf{设置。} 我们从相同的TGN种子应用Holmes式的基于规则的前向/后向追踪，并计算结果路径的$\branchCoherence$。
-
-<!-- DATA_NEEDED: GAP_S5_HOLMES — Φ_bw(我们的) vs Φ_bw(Holmes) vs Φ_bw(随机)对比表 -->
-
-\textbf{预期。} $\branchCoherence(\text{我们的}) > \branchCoherence(\text{Holmes}) > \branchCoherence(\text{随机})$，表明学习的种子选择和尊重因果方向的提取能比基于规则的替代方法产生更紧凑的链。
+序列模型为 3 层 Transformer encoder，隐藏维度 128，4 个注意力头，使用自回归下一事件预测训练。训练链由 50\% 均匀随机锚点和 50\% 良性高损失锚点产生，以同时保证良性覆盖和在线协变量匹配。最终异常分数 $A(\chain)$ 由各损失分量在良性验证集上的经验 CDF 校准得到，告警阈值取良性验证分布第 99.9 百分位。
