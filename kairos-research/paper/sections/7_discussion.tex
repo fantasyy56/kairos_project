@@ -16,7 +16,7 @@ Our evaluation uses per-day batch processing to remain comparable with prior PID
 
 \textbf{Path representation limits branched campaigns.} The current scoring object is a seed-centric linearized path; multiple alerts are merged into an analyst-facing investigation graph only after scoring. This is suitable for sparse, multi-stage APTs, but less natural for ransomware, worms, or mass scanning. Native DAG scoring is a direct extension.
 
-\textbf{Out-of-model communication channels.} Shared memory, some \texttt{mmap}-based IPC, and signal-based IPC are outside the default audit model. Attacks relying primarily on these channels may be missed; handling them requires stronger audit instrumentation or additional runtime monitoring.
+\textbf{Communication channels with limited audit coverage.} Shared memory, some \texttt{mmap}-based IPC, and signal-based IPC lack stable dependency semantics in default audit logs. Attacks relying primarily on these channels may be missed; handling them requires stronger audit instrumentation or additional runtime monitoring.
 
 \textbf{Benign training assumption.} We assume the training data is attack-free, which is standard in provenance anomaly detection. In real deployments, this assumption can be relaxed with robust statistics, coarse contamination filtering, or analyst-confirmed benign windows.
 
@@ -24,4 +24,4 @@ Our evaluation uses per-day batch processing to remain comparable with prior PID
 
 \subsection{Future Work}
 
-Future work includes four directions. First, extending the current batch implementation to live audit-log streaming. Second, designing dependency-causality-aware seed scorers to reduce reliance on a generic TGN reconstruction loss. Third, extending $\branchCoherence$ from linear paths to native DAG scoring, which would better capture branched attacks. Fourth, integrating multi-host provenance; in that setting, dependencies are no longer fully mediated by a single host kernel, and the audit model must be extended accordingly.
+Future work includes four directions. First, extending the current batch implementation to live audit-log streaming. Second, designing dependency-causality-aware seed scorers to reduce reliance on a generic TGN reconstruction loss. Third, extending $\branchCoherence$ from linear paths to native DAG scoring, which would better capture branched attacks. Fourth, integrating multi-host provenance; in that setting, dependencies are no longer fully mediated by a single host kernel, and the dependency semantics must be extended accordingly.
