@@ -621,9 +621,9 @@ GPT-5.5 接受我方 Round 11 response 的双分数请求，返回：
 
 ### 10.14 论文结构规范化与贡献重写（2026-06-24 01:39）— **英文版 + 中文版 同步完成**
 
-**背景**：用户指出 v3 改写后的论文组织更像技术说明/备忘录，不像 CCF-A/IEEE 安全系统小论文；尤其贡献段存在三类问题：术语化标题意义不明（如“审计模型”“审计支撑的因果一致性度量”）、贡献点彼此孤立、四点过多且技术细节压过工作亮点。
+**背景**：用户指出 v3 改写后的论文组织更像技术说明/备忘录，不像 CCF-A/IEEE 安全系统小论文；尤其贡献段存在三类问题：术语化标题意义不明（如"审计模型""审计支撑的因果一致性度量"）、贡献点彼此孤立、四点过多且技术细节压过工作亮点。
 
-**本次改动目标**：把论文从“技术决议落地版”调整为“正式小论文叙事版”：章节组织按安全系统论文常见结构，贡献按问题定义 → 方法 → 系统验证三层递进表达，使读者第一眼能看出做了什么、为什么成立、工作亮点在哪里。
+**本次改动目标**：把论文从"技术决议落地版"调整为"正式小论文叙事版"：章节组织按安全系统论文常见结构，贡献按问题定义 → 方法 → 系统验证三层递进表达，使读者第一眼能看出做了什么、为什么成立、工作亮点在哪里。
 
 **新的双语论文结构**：
 | 顺序 | 英文 section | 中文 section | 对应文件 |
@@ -645,13 +645,13 @@ GPT-5.5 接受我方 Round 11 response 的双分数请求，返回：
 - `Related Work / 相关工作` 移到讨论之后、结论之前，符合系统安全论文常见写法。
 
 **新的贡献表达（三层递进）**：
-1. **问题定义层**：We reformulate APT detection as causal-chain recovery / 我们把 APT 检测重新定义为因果链恢复问题。强调检测对象从窗口/节点/边转为分析员真正需要的事件链，并区分“结构成立性”和“语义异常性”。
+1. **问题定义层**：We reformulate APT detection as causal-chain recovery / 我们把 APT 检测重新定义为因果链恢复问题。强调检测对象从窗口/节点/边转为分析员真正需要的事件链，并区分"结构成立性"和"语义异常性"。
 2. **方法层**：We propose a method for extracting trustworthy causal chains from large provenance graphs / 我们提出一种从海量溯源图中提取可信因果链的方法。强调用 `\branchCoherence` 收紧可达性、缓解依赖爆炸，并且无需攻击标签或攻击模板即可校准。
 3. **系统验证层**：We build and evaluate a zero-attack-prior chain-level APT detection system / 我们构建并评估了一个无攻击先验的链级 APT 检测系统。强调先提取结构可信候选链，再用自监督序列模型判定语义异常，并用链级指标评估攻击相关性和完整攻击叙事。
 
 **双语文件同步变更**：
 - `paper/sections/0_abstract.tex` 与 `paper-CN/sections/0_abstract.tex`：重写为链级问题 → 可信链提取 → 自监督异常检测 → 实验验证，不再罗列四项贡献。
-- `paper/sections/1_introduction.tex` 与 `paper-CN/sections/1_introduction.tex`：重写贡献段为三层结构，删除“four contributions/四项贡献”式技术清单。
+- `paper/sections/1_introduction.tex` 与 `paper-CN/sections/1_introduction.tex`：重写贡献段为三层结构，删除"four contributions/四项贡献"式技术清单。
 - `paper/sections/2_background.tex` 与 `paper-CN/sections/2_background.tex`：改为背景、链级问题定义、审计模型与假设、研究挑战。
 - `paper/sections/5_metric_validation.tex` 与 `paper-CN/sections/5_metric_validation.tex`：改为实验设置，集中描述数据集、baseline、指标、实现细节。
 - `paper/sections/6_evaluation.tex` 与 `paper-CN/sections/6_evaluation.tex`：改为实验结果，按 RQ1–RQ4 组织。
@@ -659,10 +659,10 @@ GPT-5.5 接受我方 Round 11 response 的双分数请求，返回：
 - `paper/sections/8_conclusion.tex` 与 `paper-CN/sections/8_conclusion.tex`：改为三层贡献闭环，不再列四项显式承诺。
 
 **已清除/避免的表述**：
-- `four contributions` / “四项贡献”
-- `four explicit commitments` / “四项显式承诺”
-- `An explicit audit model for kernel-mediated dependency` / “为内核中介依赖显式声明一套审计模型”作为贡献标题
-- `audit-grounded, model-free Causal Coherence Metric` / “审计支撑的、无需模型的因果一致性度量”作为贡献标题
+- `four contributions` / "四项贡献"
+- `four explicit commitments` / "四项显式承诺"
+- `An explicit audit model for kernel-mediated dependency` / "为内核中介依赖显式声明一套审计模型"作为贡献标题
+- `audit-grounded, model-free Causal Coherence Metric` / "审计支撑的、无需模型的因果一致性度量"作为贡献标题
 - 独立 `§3.5` 补丁式章节结构
 - `Decision Dxx`、`Weakness Wxx` 等内部改写痕迹
 
@@ -675,4 +675,165 @@ GPT-5.5 接受我方 Round 11 response 的双分数请求，返回：
 
 ---
 
-*论文已从“v3 技术决议落地版”同步调整为中英文一致的“小论文叙事版”。*
+*论文已从"v3 技术决议落地版"同步调整为中英文一致的"小论文叙事版"。*
+
+---
+
+## 11. 论文改写 v2→v3→精化（2026-06-23 ~ 06-24 全程同步）**最终总结**
+
+### 11.1 改写进程三阶段压缩记录
+
+**v2 阶段（2026-06-23）**：fantinli 诊断论文"亮点错位"（肘部检测过度强调、因果语义埋没、贡献表述技术化），触发 v2 决议 D1–D10（TGN 消失、§1 六步递推、ABD 类问题分类）。
+
+**Round 11/12 外审（2026-06-23 16:38 ~ 00:17）**：GPT-5.5 批评理论 claim 过强（概率论、process bridge 绝对性、Poisson 假设、因果术语），但认可整体框架可行（Score A: 7/10）。响应触发 v3 决议 T1–T7（删概率、改 mean-log Φ、公式化条件因子、audit model 表、mixture training）。
+
+**v3 精化（2026-06-24 00:40）**：全量落地英文 `paper/` + 中文 `paper-CN/` 各 9 节；并进一步调整为**正式小论文叙事版**结构（问题定义→方法→实验验证三层贡献递进）。
+
+### 11.2 双语论文最终结构
+
+| 顺序 | 英文 section | 中文 section | 关键改写 |
+|------|--------------|--------------|---------|
+| 1 | Introduction | 引言 | 改为 APT现象→链级问题→方法→验证 |
+| 2 | Background & Problem | 背景与问题定义 | 加 `Audit Model & Assumptions` 小节（TCB+事件覆盖表） |
+| 3 | Method | 方法 | Φ→mean-log；case-1/2 公式化条件因子；分离 Φ/A/Alert |
+| 4 | Experimental Setup | 实验设置 | 改自原"Metric Validation"；集中数据集/baseline/指标 |
+| 5 | Results | 实验结果 | 按 RQ1–RQ4 组织；种子回溯分解；三层链正确性；负控实验 |
+| 6 | Discussion | 讨论 | 适用范围、部署、W1–W6 诚实标注 |
+| 7 | Related Work | 相关工作 | 移至讨论后，保持 2+2 分类 |
+| 8 | Conclusion | 结论 | 问题→方法→验证三层闭环 |
+
+### 11.3 核心改写决议落地
+
+**措辞强制替换**（与 v3 North Star 对标）：
+- ❌ `probability` → ✅ `coherence score`（仅在否定式声明时用 probability）
+- ❌ `three-pillar causal validity` → ✅ `three sources of dependency evidence`
+- ❌ `kernel-observed causality` → ✅ `kernel-mediated dependency evidence under audit model`
+- ❌ `exact causal connection` → ✅ `identity-continuity with conditional factors g_thread/g_exec/g_lifetime`
+
+**新增内容**：
+- 审计模型显式小节（TCB、事件覆盖、实体恒等性、缺失事件模型）
+- Process bridge 公式化：`φ_1 = g_thread · g_exec · g_lifetime`
+- 资源类存活分化：File (Poisson) / Pipe (ordered) / Socket (conn-state) / SHM (out-of-model)
+- Φ/A/Alert 三式分离：`Extract(s; Φ) → {C_i} | A(C) = SeqLoss_eCDF | Alert = 1[A>θ]`
+- Mixture anchor sampling：50% random + 50% seed-matched，ablation 三组 a/b/c
+- 五层链正确性：DPC (dependency-plausible) / ARC (attack-relevant) / CAN (complete narrative) + IoU/node-recall/temporal-overlap
+
+**已清除**：
+- 概率论 claim（保留 3 处必要否定式声明）
+- 四项技术贡献清单（改为三层问题→方法→系统递进）
+- 肘部检测作为亮点
+- TGN 作为贡献（改为框架无关 seed identifier）
+- 独立 §3.5 补丁式结构
+
+### 11.4 双语同步验收清单
+
+✅ **英文版**（`paper/`）：  
+- `0_abstract.tex` 重写（链级问题、可信提取、自监督检测）
+- `1_introduction.tex` 改为三层贡献递进
+- `2_background.tex` 加 Audit Model 小节 + 问题定义形式化
+- `4_system_design.tex` Φ mean-log + case 公式化 + Φ/A/Alert 分离
+- `5_metric_validation.tex` → 实验设置（RQ 定义、baseline、指标）
+- `6_evaluation.tex` 按 RQ1–RQ4 + seed-recall 分解 + 三层链正确性
+- `7_discussion.tex` 加 W1–W6 + 部署模式
+- `8_conclusion.tex` 三层闭环
+
+✅ **中文版**（`paper-CN/`）：  
+与英文版逐 section 同步，保留专业术语对译表（dependency causality = 依赖因果、coherence = 一致性、DPC/ARC/CAN、audit-grounded = 审计支撑）
+
+✅ **References**：  
+- 新增 King-Backtracking (SOSP 2003) → elbow detection 理论基础（已在 v1 加入）
+- 未做 placeholder 修复（eagleeye typo、EdgeTrace、SLEUTH 未引）→ 列为 BP1 后可选任务
+
+### 11.5 状态与下一步
+
+**当前状态**：
+- ✅ v2 改写蓝图 → 全部执行
+- ✅ Round 11/12 外审 → GPT-5.5 理论框架放行（Score A: 7/10）
+- ✅ v3 论文改写 → 英中双版本同步落地
+- ✅ 论文结构精化 → 从"技术决议落地版"→ "正式小论文叙事版"
+
+**下一步行动**（BP1 启动前置条件）：
+1. ~~latexmk 编译验证~~ → 已验证英文 pdfLaTeX、中文 XeLaTeX 可编译
+2. **GAP_S5_BENIGN_RANDOM 实验**：Φ 在 benign 与 random-shuffled graph 上对比（最便宜、最能验证度量有效性）
+3. **Mixture anchor 代码原型**：50% random + 50% seed-matched 两种采样
+4. **Negative-control sanity check**：time-reversed / entity-randomized / interference-shuffled 场景下 Φ 退化验证
+5. **真实实验数据填入**：BP1 实验完成后替换 `DATA_NEEDED: GAP_*` 占位符
+
+**CCS 2026 Timeline 保持不变**：
+| BP | 截止日期 | Deliverable |
+|----|---------|------------|
+| BP1 | 2026-07-31 | Metric validation（benign vs random AUC、Poisson goodness-of-fit、negative-control、φ_min/τ_gap/β_p sensitivity） |
+| BP2 | 2026-09-30 | 自回归 Transformer 训练完成（E3 benign chains） |
+| BP3 | 2026-11-30 | 全流水线集成 + E3/E5 全 baseline 对比 + ablation 六项 |
+| BP4 | 2026-12~01中 | 论文最终写作 + 投稿 buffer |
+| 投稿 | 2027-01 底 | CCS 2026 |
+
+---
+
+*论文从改写 v2 到定稿已全量完成（2026-06-23 ~ 06-24）。下次会话恢复点：BP1 第一个实验任务（benign-random AUC 对标）。*
+
+---
+
+## 12. Introduction §17 段精化与下阶段定位（2026-06-30）
+
+### 12.1 §17 段（Transformer 检测器引入）三轮迭代
+
+**初版问题**：原段只说"结构成立 ≠ 攻击 → 训练 Transformer"，缺少现有方法的不足论据，与前文"因果链"段落叙事不对称。
+
+**v1 扩展**（一次过头）：拆为三段递进——
+1. 链级判断难度（单步相似、靠组合区分）
+2. 现有方法三类对比（规则模板 / 异常 PIDS / 序列模型）
+3. 自监督 Transformer 的合理性
+
+**v2 精简**（用户反馈\"点到为止，不要重复引用\"）：
+- 删除\"现有方法\"独立段落
+- 合并为单句两点式过渡，直接连\"因此训练 Transformer\"
+- 移除全部引用（这些文献在 §4 段和 Related Work 已引）
+- 删除\"近期序列模型\"论据（与前文 §4 段\"近期 Transformer 工作\"重复）
+
+**最终段落结构**：
+\`\`\`
+§17 链级判断难 → 单步相似、靠组合 (保留)
+§18 (合并) 现有 PIDS 粒度不对 + 规则模板覆盖窄 → 因此训练 Transformer
+§19 自注意力适配阶段化 + 自监督无需攻击标签 (保留)
+\`\`\`
+
+### 12.2 引用键统一
+
+- 移除未收录的 `milajerdi2019holmes` / `milajerdi2019poirot` / `hossain2017sleuth`
+- 统一到现有 bib：`holmes2019` / `poirot2019`
+- SLEUTH 在 Related Work 中保持裸文本不带 \\cite（与现状一致）
+
+### 12.3 Introduction + Related Work 阶段告一段落
+
+✅ 双语 Introduction 9 段紧凑结构定稿（英文 ~280 词 / 中文 ~520 字 已回收至简洁版）
+✅ §17 段叙事与因果链段落对称（问题 → 现有方法不足 → 提出方案）
+✅ 引用键全部对齐 references.bib
+✅ Related Work 维持 2+2 分类，结构不动
+
+### 12.4 下阶段：方法部分——因果链构造完善
+
+**用户判断**：之前讨论出了\"日志 → 因果链\"的初版（链一致性评分 Φ + mean-log + 三因子 g_thread·g_exec·g_lifetime + 资源类存活分化），但**很多细节和可行性未讨论充分**。论文 §4 当前版本不够完整。
+
+**待完善的细节维度**（预判）：
+1. **Φ 评分的具体公式**：g_thread/g_exec/g_lifetime 三因子的精确定义、参数 φ_min/τ_gap/β_p 取值依据
+2. **资源类存活模型**：File (Poisson)、Pipe (ordered)、Socket (conn-state)、SHM (out-of-model) 的判定边界与触发条件
+3. **种子识别器（seed scorer）**：边级评分如何与下游 Φ 链提取衔接，是否端到端？
+4. **双向链提取算法**：前向/后向扩展的截断准则、剪枝策略、最大链长控制
+5. **链一致性 vs 链完整性**：DPC / ARC / CAN 三层指标的算法定义与可计算性
+6. **审计模型边界**：TCB 假设下，缺失事件、内核级攻击、跨主机审计的处理
+7. **可行性威胁**：依赖爆炸是否被 Φ 真的有效缓解？β_p 标定的数据需求？冷启动？
+
+**讨论方式**：用户询问是否需要外部 GPT 协助。回复建议——
+- **可自主推进**：方案细化、公式补全、算法伪代码、可行性自审、与论文 §4 现状对照
+- **建议外审介入点**（仅在以下情况）：
+  a. 关键公式存在多种合理选择，无法仅凭论文上下文判断
+  b. 需要对标特定 baseline（如 Sentient/EagleEye 的链构造细节）但缺乏原文
+  c. 涉及理论 claim（如 Poisson 假设是否会再次被批）需要红队挑战
+- **默认路径**：先自主完善初版 → 形成可质询的草稿 → 用户决定是否再走 Round 13 外审
+
+**下次会话恢复点**：
+- 读取当前 `paper/sections/3_method.tex` 与 `paper-CN/sections/3_method.tex`
+- 对照 §11.3 的核心改写决议（Φ mean-log、case-1/2、Φ/A/Alert 分离）
+- 逐节梳理\"日志 → 因果链\"流水线：seed → bidirectional extension → Φ scoring → truncation → 输出链集 {C_i}
+- 补全公式定义、算法伪代码、可行性自审三件套
