@@ -12,7 +12,11 @@
 
 \subsection{方法概览}
 
+\input{figures/architecture}
+
 图~\ref{fig:architecture} 给出系统架构。流水线包含\emph{离线阶段}（每次部署运行一次）与\emph{在线阶段}（每个测试日运行一次）。
+
+\paragraph{流水线鸟瞰。}两个阶段之间通过一组明确的产物交接。\emph{离线}阶段消费良性审计日志，产出三类部署期资产：(i) 校准好的结构性度量 $\branchCoherence$，以及校准协议（\S\ref{sec:calibration}）发现的 OS 级参数 $(\hoplimit^*, \tau^*, \graphdecay^*, \branchpenalty^*, \phi_{\min}, \beta_p, \lambda_r)$；(ii) 自监督 Transformer，其训练链来自同一校准过的提取器（\S\ref{sec:training_chains}）；(iii) 用于恶意性分数 $A(\chain)$ 的逐分量经验 CDF 与阈值 $\theta$（\S\ref{sec:detection}）。\emph{在线}阶段，对每个测试日：种子识别器（\S\ref{sec:seed}）标记的边作为锚点，触发由 $\branchCoherence$ 引导的双向链提取（\S\ref{sec:extractor}）；提取出的依赖合理链由 Transformer 评分得到 $A(\chain)$，并将 $A(\chain) > \theta$ 的链合并为攻击路径（\S\ref{sec:detection}）。图~\ref{fig:architecture} 中的两层（蓝色 $\branchCoherence$、红色 $A$）正对应下文的两个设计层。
 
 \paragraph{设计原则：结构一致性与语义异常的分离。}贯穿全文的一个中心原则是把以往工作中纠缠在一起的两件事分离。第一件是\emph{结构一致性}——给定一条事件链，在内核记录的溯源图语义下，它是否构成依赖合理的序列；这是链本身的结构属性，可以从图拓扑、时间戳、身份连续性出发，以无需模型的方式判定。第二件是\emph{语义异常}——一条已知依赖合理的链，相对于良性系统行为是否显得异常；这是分布性属性，只能在良性参考之下学习。流水线把这两件事分配给两个不同层：因果一致性度量 $\branchCoherence$ 负责结构一致性层（\S\ref{sec:metric_def}），仅用于链提取与排序；自监督序列模型产出一个独立的恶意性分数 $A(\chain)$ 负责语义异常层（\S\ref{sec:seq_model}），并且只有 $A$ 进入最终的告警判定（\S\ref{sec:detection}）。这一分离贯穿全文使用：第一，攻击链与良性链都应当是结构一致的——攻击同样服从 OS 物理——因此 $\branchCoherence$ 本身不区分二者；区分的工作由序列模型承担。第二，两层可以独立评估、校准、改进，这是它们得以建立在独立理论基础上的前提（\S\ref{sec:calibration}, \S\ref{sec:training_chains}）。
 

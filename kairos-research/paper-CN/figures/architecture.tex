@@ -1,0 +1,125 @@
+% ============================================================
+%  系统架构图（中文版 caption；box 内仍使用英文术语以保持紧凑）
+%  与 paper/figures/architecture.tex 视觉布局完全一致
+% ============================================================
+\begin{figure*}[t]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  node distance = 6mm and 7mm,
+  every node/.style = {font=\footnotesize},
+  data/.style    = {rectangle, rounded corners=2pt, draw=black!55,
+                    fill=gray!12, minimum width=22mm, minimum height=9mm,
+                    align=center, inner sep=2pt},
+  struct/.style  = {rectangle, rounded corners=2pt, draw=blue!65!black,
+                    fill=blue!10,  minimum width=28mm, minimum height=10mm,
+                    align=center, inner sep=2pt, line width=0.5pt},
+  sem/.style     = {rectangle, rounded corners=2pt, draw=red!70!black,
+                    fill=red!8,    minimum width=28mm, minimum height=10mm,
+                    align=center, inner sep=2pt, line width=0.5pt},
+  asset/.style   = {rectangle, rounded corners=1pt, draw=black!60,
+                    fill=yellow!18, minimum width=22mm, minimum height=8mm,
+                    align=center, inner sep=2pt, font=\scriptsize},
+  alert/.style   = {rectangle, rounded corners=2pt, draw=green!45!black,
+                    fill=green!12, minimum width=28mm, minimum height=10mm,
+                    align=center, inner sep=2pt, line width=0.5pt},
+  phase/.style   = {font=\small\bfseries\itshape, anchor=west},
+  flow/.style    = {-{Latex[length=2mm]}, line width=0.45pt, draw=black!75},
+  reuse/.style   = {-{Latex[length=2mm]}, line width=0.45pt, draw=black!55,
+                    dashed},
+  layerlbl/.style= {font=\scriptsize\itshape, text=black!60},
+]
+
+% ===== OFFLINE =====
+\begin{scope}[local bounding box=offline]
+\node[data]    (logs)    {Benign\\Audit Logs};
+\node[data,    right=of logs] (anchors)
+       {Process-Lifecycle\\Anchors\\\scriptsize(\S\ref{sec:calibration})};
+\node[struct,  right=of anchors] (calib)
+       {Calibration Protocol\\\scriptsize discover
+        $\hoplimit^{\!*}\!,\tau^{\!*}\!,\graphdecay^{\!*}\!,
+         \branchpenalty^{\!*}\!,\phi_{\min},\beta_p,\lambda_r$};
+\node[asset,   right=of calib] (phistar)
+       {Calibrated $\branchCoherence$\\\scriptsize structural metric};
+
+\node[data,    below=8mm of anchors] (train)
+       {Benign Training Chains\\\scriptsize 50\% random + 50\% high-loss
+        \\\scriptsize(\S\ref{sec:training_chains})};
+\node[sem,     right=of train] (xfmr)
+       {Self-Supervised\\Transformer\\\scriptsize next-event pred.
+        (\S\ref{sec:seq_model})};
+\node[asset,   right=of xfmr] (modelasset)
+       {Trained Model\\\scriptsize + per-component eCDF\,/\,$\theta$};
+
+\draw[flow] (logs)    -- (anchors);
+\draw[flow] (anchors) -- (calib);
+\draw[flow] (calib)   -- (phistar);
+\draw[flow] (logs.south)   |- (train.west);
+\draw[flow] (train)        -- (xfmr);
+\draw[flow] (xfmr)         -- (modelasset);
+\draw[flow, draw=blue!65!black] (phistar.south) |- ([yshift=2mm]train.east);
+\end{scope}
+
+\node[phase, above=1mm of offline.north west, xshift=-3mm,
+      text=black!70] {Offline (run once per deployment)};
+\begin{scope}[on background layer]
+  \node[fit=(offline), draw=black!25, dashed, rounded corners=3pt,
+        inner sep=4mm, fill=blue!2] {};
+\end{scope}
+
+% ===== ONLINE =====
+\begin{scope}[local bounding box=online, shift={(0,-5.6cm)}]
+\node[data]                    (test) {Test\\Provenance Graph};
+\node[struct, right=of test]   (seed)
+      {Seed Scorer\\\scriptsize TGN, top-5\% edges
+       (\S\ref{sec:seed})};
+\node[struct, right=of seed]   (extract)
+      {Bi-directional\\Chain Extractor\\\scriptsize Alg.~\ref{alg:extract},
+       guided by $\branchCoherence$ (\S\ref{sec:extractor})};
+\node[data,   right=of extract, fill=blue!6, draw=blue!50!black] (dpc)
+      {Dependency-\\Plausible Chains\\\scriptsize $\{\chain_1,\dots,\chain_k\}$};
+
+\node[sem,    below=11mm of extract] (score)
+      {Transformer Scoring\\\scriptsize per-event loss
+       $\to$ eCDF $\to A(\chain)$
+       (\S\ref{sec:detection})};
+\node[alert,  right=of score]        (alert)
+      {Alert \& Merge\\\scriptsize $\mathbb{1}[A(\chain)\!>\!\theta]$
+       $\Rightarrow$ attack path};
+
+\draw[flow] (test)    -- (seed);
+\draw[flow] (seed)    -- (extract);
+\draw[flow] (extract) -- (dpc);
+\draw[flow] (dpc.south)   |- (score.east);
+\draw[flow] (score)       -- (alert);
+\end{scope}
+
+\node[phase, above=1mm of online.north west, xshift=-3mm,
+      text=black!70] {Online (run per test day)};
+\begin{scope}[on background layer]
+  \node[fit=(online), draw=black!25, dashed, rounded corners=3pt,
+        inner sep=4mm, fill=red!2] {};
+\end{scope}
+
+% offline -> online reuse arrows
+\draw[reuse] (phistar.south)  to[out=-90,in=90]
+             ([xshift=-2mm]extract.north);
+\draw[reuse] (modelasset.south) to[out=-90,in=90]
+             ([xshift=2mm]score.north);
+
+% side-labels
+\node[layerlbl, anchor=west] at ([xshift=3mm]dpc.east)
+      {\textcolor{blue!65!black}{\textbf{Structural layer}}\\
+       model-free, $\branchCoherence$};
+\node[layerlbl, anchor=west] at ([xshift=3mm]alert.east)
+      {\textcolor{red!70!black}{\textbf{Semantic layer}}\\
+       learned, $A(\chain)$};
+
+\end{tikzpicture}%
+}
+\caption{系统架构图。
+\textbf{离线阶段}（上）：从良性审计日志出发，(i) 抽取进程生命周期锚点并执行校准协议，得到结构性度量 $\branchCoherence$；(ii) 在校准好的提取器下抽取良性链，训练自监督 Transformer（并校准逐分量 eCDF 与阈值 $\theta$）。
+\textbf{在线阶段}（下）：对每个测试日，种子识别器标记高损失边作为锚点，由 $\branchCoherence$ 引导双向链提取；得到的依赖合理链经 Transformer 评分得到 $A(\chain)$，$A(\chain){>}\theta$ 的链被合并为攻击路径。
+两层——结构一致性层（蓝色 $\branchCoherence$）与语义异常层（红色 $A$）——自始至终建立在独立的基础之上（\S\ref{sec:design}）。}
+\label{fig:architecture}
+\end{figure*}

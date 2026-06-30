@@ -1,0 +1,165 @@
+% ============================================================
+%  System architecture figure (shared by paper/ and paper-CN/)
+%  Two-row layout: Offline (top) -> Online (bottom)
+%  Color encoding:
+%    - blue  : structural-coherence layer (Phi)
+%    - red   : semantic-anomaly layer (A)
+%    - gray  : data / features / OS artefacts
+%    - green : final alert / attack path
+% ============================================================
+\begin{figure*}[t]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  node distance = 6mm and 7mm,
+  every node/.style = {font=\footnotesize},
+  % --- node styles ---
+  data/.style    = {rectangle, rounded corners=2pt, draw=black!55,
+                    fill=gray!12, minimum width=22mm, minimum height=9mm,
+                    align=center, inner sep=2pt},
+  struct/.style  = {rectangle, rounded corners=2pt, draw=blue!65!black,
+                    fill=blue!10,  minimum width=28mm, minimum height=10mm,
+                    align=center, inner sep=2pt, line width=0.5pt},
+  sem/.style     = {rectangle, rounded corners=2pt, draw=red!70!black,
+                    fill=red!8,    minimum width=28mm, minimum height=10mm,
+                    align=center, inner sep=2pt, line width=0.5pt},
+  asset/.style   = {rectangle, rounded corners=1pt, draw=black!60,
+                    fill=yellow!18, minimum width=22mm, minimum height=8mm,
+                    align=center, inner sep=2pt, font=\scriptsize},
+  alert/.style   = {rectangle, rounded corners=2pt, draw=green!45!black,
+                    fill=green!12, minimum width=28mm, minimum height=10mm,
+                    align=center, inner sep=2pt, line width=0.5pt},
+  phase/.style   = {font=\small\bfseries\itshape, anchor=west},
+  flow/.style    = {-{Latex[length=2mm]}, line width=0.45pt, draw=black!75},
+  reuse/.style   = {-{Latex[length=2mm]}, line width=0.45pt, draw=black!55,
+                    dashed},
+  layerlbl/.style= {font=\scriptsize\itshape, text=black!60},
+]
+
+% =========================================================
+% OFFLINE band (top)
+% =========================================================
+\begin{scope}[local bounding box=offline]
+
+% Row 1: benign logs -> calibration anchors -> calibrated Phi
+\node[data]    (logs)    {Benign\\Audit Logs};
+\node[data,    right=of logs] (anchors)
+       {Process-Lifecycle\\Anchors\\\scriptsize(\S\ref{sec:calibration})};
+\node[struct,  right=of anchors] (calib)
+       {Calibration Protocol\\\scriptsize discover
+        $\hoplimit^{\!*}\!,\tau^{\!*}\!,\graphdecay^{\!*}\!,
+         \branchpenalty^{\!*}\!,\phi_{\min},\beta_p,\lambda_r$};
+\node[asset,   right=of calib] (phistar)
+       {Calibrated $\branchCoherence$\\\scriptsize structural metric};
+
+% Row 2: training corpus -> Transformer -> trained model + theta
+\node[data,    below=8mm of anchors] (train)
+       {Benign Training Chains\\\scriptsize 50\% random + 50\% high-loss
+        \\\scriptsize(\S\ref{sec:training_chains})};
+\node[sem,     right=of train] (xfmr)
+       {Self-Supervised\\Transformer\\\scriptsize next-event pred.
+        (\S\ref{sec:seq_model})};
+\node[asset,   right=of xfmr] (modelasset)
+       {Trained Model\\\scriptsize + per-component eCDF
+        \,/\,threshold $\theta$};
+
+% backbone flow inside offline
+\draw[flow] (logs)    -- (anchors);
+\draw[flow] (anchors) -- (calib);
+\draw[flow] (calib)   -- (phistar);
+\draw[flow] (logs.south)   |- (train.west);
+\draw[flow] (train)        -- (xfmr);
+\draw[flow] (xfmr)         -- (modelasset);
+% Phi guides training-chain extraction
+\draw[flow, draw=blue!65!black] (phistar.south) |- ([yshift=2mm]train.east);
+
+\end{scope}
+
+% Phase label (left margin of offline band)
+\node[phase, above=1mm of offline.north west, xshift=-3mm,
+      text=black!70] {Offline (run once per deployment)};
+
+% Light background band for offline
+\begin{scope}[on background layer]
+  \node[fit=(offline), draw=black!25, dashed, rounded corners=3pt,
+        inner sep=4mm, fill=blue!2] {};
+\end{scope}
+
+% =========================================================
+% ONLINE band (bottom)
+% =========================================================
+\begin{scope}[local bounding box=online, shift={(0,-5.6cm)}]
+
+\node[data]                    (test) {Test\\Provenance Graph};
+\node[struct, right=of test]   (seed)
+      {Seed Scorer\\\scriptsize TGN, top-5\% edges
+       (\S\ref{sec:seed})};
+\node[struct, right=of seed]   (extract)
+      {Bi-directional\\Chain Extractor\\\scriptsize Alg.~\ref{alg:extract},
+       guided by $\branchCoherence$ (\S\ref{sec:extractor})};
+\node[data,   right=of extract, fill=blue!6, draw=blue!50!black] (dpc)
+      {Dependency-\\Plausible Chains\\\scriptsize $\{\chain_1,\dots,\chain_k\}$};
+
+\node[sem,    below=11mm of extract] (score)
+      {Transformer Scoring\\\scriptsize per-event loss
+       $\to$ eCDF $\to A(\chain)$
+       (\S\ref{sec:detection})};
+\node[alert,  right=of score]        (alert)
+      {Alert \& Merge\\\scriptsize $\mathbb{1}[A(\chain)\!>\!\theta]$
+       $\Rightarrow$ attack path};
+
+% online flows
+\draw[flow] (test)    -- (seed);
+\draw[flow] (seed)    -- (extract);
+\draw[flow] (extract) -- (dpc);
+\draw[flow] (dpc.south)   |- (score.east);
+\draw[flow] (score)       -- (alert);
+
+\end{scope}
+
+% Phase label
+\node[phase, above=1mm of online.north west, xshift=-3mm,
+      text=black!70] {Online (run per test day)};
+
+% Light background band for online
+\begin{scope}[on background layer]
+  \node[fit=(online), draw=black!25, dashed, rounded corners=3pt,
+        inner sep=4mm, fill=red!2] {};
+\end{scope}
+
+% =========================================================
+% Offline -> Online reuse arrows (dashed, top-to-bottom)
+% =========================================================
+\draw[reuse] (phistar.south)  to[out=-90,in=90]
+             ([xshift=-2mm]extract.north);
+\draw[reuse] (modelasset.south) to[out=-90,in=90]
+             ([xshift=2mm]score.north);
+
+% =========================================================
+% Layer side-labels (right margin, online band)
+% =========================================================
+\node[layerlbl, anchor=west] at ([xshift=3mm]dpc.east)
+      {\textcolor{blue!65!black}{\textbf{Structural layer}}\\
+       model-free, $\branchCoherence$};
+\node[layerlbl, anchor=west] at ([xshift=3mm]alert.east)
+      {\textcolor{red!70!black}{\textbf{Semantic layer}}\\
+       learned, $A(\chain)$};
+
+\end{tikzpicture}%
+}
+\caption{System architecture.
+\textbf{Offline} (top): from benign audit logs we (i) draw
+process-lifecycle anchors and run the calibration protocol to obtain
+the structural metric $\branchCoherence$, and (ii) mine benign
+chains under the calibrated extractor to train the self-supervised
+Transformer (with per-component eCDFs and threshold $\theta$).
+\textbf{Online} (bottom): for each test day, the seed scorer flags
+high-loss edges that anchor bidirectional chain extraction guided by
+$\branchCoherence$; the resulting dependency-plausible chains
+are scored by the Transformer to yield $A(\chain)$, and chains with
+$A(\chain){>}\theta$ are merged into attack paths.
+The two layers---structural coherence ($\branchCoherence$,
+blue) and semantic anomaly ($A$, red)---are kept on independent
+foundations throughout (\S\ref{sec:design}).}
+\label{fig:architecture}
+\end{figure*}
