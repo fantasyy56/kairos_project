@@ -1,125 +1,82 @@
 % ============================================================
-%  系统架构图（中文版 caption；box 内仍使用英文术语以保持紧凑）
-%  与 paper/figures/architecture.tex 视觉布局完全一致
+%  系统架构图（中文版）—— 单一技术主流程，一眼看清
+%  上：两项可复用资产的生成（结构度量 Φ / 自监督 Transformer）
+%  下：主流程（种子识别 → 双向链提取 → 三级连通判定 → 评分 → 告警）
+%  不区分"部署时/测试时"等工程化运行时机，只呈现技术要点
 % ============================================================
 \begin{figure*}[t]
 \centering
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[
-  node distance = 6mm and 7mm,
+  x = 30mm, y = 16mm,
   every node/.style = {font=\footnotesize},
-  data/.style    = {rectangle, rounded corners=2pt, draw=black!55,
-                    fill=gray!12, minimum width=22mm, minimum height=9mm,
-                    align=center, inner sep=2pt},
-  struct/.style  = {rectangle, rounded corners=2pt, draw=blue!65!black,
-                    fill=blue!10,  minimum width=28mm, minimum height=10mm,
-                    align=center, inner sep=2pt, line width=0.5pt},
-  sem/.style     = {rectangle, rounded corners=2pt, draw=red!70!black,
-                    fill=red!8,    minimum width=28mm, minimum height=10mm,
-                    align=center, inner sep=2pt, line width=0.5pt},
-  asset/.style   = {rectangle, rounded corners=1pt, draw=black!60,
-                    fill=yellow!18, minimum width=22mm, minimum height=8mm,
-                    align=center, inner sep=2pt, font=\scriptsize},
-  alert/.style   = {rectangle, rounded corners=2pt, draw=green!45!black,
-                    fill=green!12, minimum width=28mm, minimum height=10mm,
-                    align=center, inner sep=2pt, line width=0.5pt},
-  phase/.style   = {font=\small\bfseries\itshape, anchor=west},
-  flow/.style    = {-{Latex[length=2mm]}, line width=0.45pt, draw=black!75},
-  reuse/.style   = {-{Latex[length=2mm]}, line width=0.45pt, draw=black!55,
-                    dashed},
-  layerlbl/.style= {font=\scriptsize\itshape, text=black!60},
+  data/.style   = {rectangle, rounded corners=2pt, draw=black!55,
+                   fill=gray!10, text width=25mm, minimum height=12mm,
+                   align=center, inner sep=2pt},
+  struct/.style = {rectangle, rounded corners=2pt, draw=blue!65!black,
+                   fill=blue!10, text width=25mm, minimum height=12mm,
+                   align=center, inner sep=2pt, line width=0.5pt},
+  sem/.style    = {rectangle, rounded corners=2pt, draw=red!70!black,
+                   fill=red!8,  text width=25mm, minimum height=12mm,
+                   align=center, inner sep=2pt, line width=0.5pt},
+  alert/.style  = {rectangle, rounded corners=2pt, draw=green!45!black,
+                   fill=green!14, text width=25mm, minimum height=12mm,
+                   align=center, inner sep=2pt, line width=0.5pt},
+  bflow/.style  = {-{Latex[length=2mm]}, draw=blue!65!black,
+                   line width=0.5pt},
+  rflow/.style  = {-{Latex[length=2mm]}, draw=red!70!black,
+                   line width=0.5pt},
+  gflow/.style  = {-{Latex[length=2mm]}, draw=black!70,
+                   line width=0.4pt},
+  reuse/.style  = {-{Latex[length=2mm]}, line width=0.6pt},
 ]
 
-% ===== OFFLINE =====
-\begin{scope}[local bounding box=offline]
-\node[data]    (logs)    {Benign\\Audit Logs};
-\node[data,    right=of logs] (anchors)
-       {Process-Lifecycle\\Anchors\\\scriptsize(\S\ref{sec:calibration})};
-\node[struct,  right=of anchors] (calib)
-       {Calibration Protocol\\\scriptsize discover
-        $\hoplimit^{\!*}\!,\tau^{\!*}\!,\graphdecay^{\!*}\!,
-         \branchpenalty^{\!*}\!,\phi_{\min},\beta_p,\lambda_r$};
-\node[asset,   right=of calib] (phistar)
-       {Calibrated $\branchCoherence$\\\scriptsize structural metric};
+% ===== 上：两项可复用资产 ======================================
+\node[data]   (logs) at (0,1)    {良性审计日志};
+\node[struct] (phi)  at (2.3,1)  {结构度量 $\branchCoherence$\\\scriptsize 良性生命周期模式};
+\node[sem]    (xfmr) at (4.9,1)  {自监督 Transformer\\\scriptsize 学习良性因果分布};
 
-\node[data,    below=8mm of anchors] (train)
-       {Benign Training Chains\\\scriptsize 50\% random + 50\% high-loss
-        \\\scriptsize(\S\ref{sec:training_chains})};
-\node[sem,     right=of train] (xfmr)
-       {Self-Supervised\\Transformer\\\scriptsize next-event pred.
-        (\S\ref{sec:seq_model})};
-\node[asset,   right=of xfmr] (modelasset)
-       {Trained Model\\\scriptsize + per-component eCDF\,/\,$\theta$};
+\draw[gflow] (logs) -- (phi);
+\draw[bflow] (phi)  -- (xfmr)
+   node[midway, above, font=\tiny, text=blue!65!black]
+        {$\branchCoherence$ 引导采样良性链};
 
-\draw[flow] (logs)    -- (anchors);
-\draw[flow] (anchors) -- (calib);
-\draw[flow] (calib)   -- (phistar);
-\draw[flow] (logs.south)   |- (train.west);
-\draw[flow] (train)        -- (xfmr);
-\draw[flow] (xfmr)         -- (modelasset);
-\draw[flow, draw=blue!65!black] (phistar.south) |- ([yshift=2mm]train.east);
-\end{scope}
+% ===== 下：主流程 ==============================================
+\node[data]   (test)    at (0,-1)   {待测溯源图};
+\node[struct, text width=28mm, minimum height=14mm] (seed) at (1.4,-1)
+   {种子识别\\\scriptsize 对每条边评分，\\取高损失边作为可疑锚点};
+\node[struct, text width=32mm, minimum height=14mm] (extract) at (3.1,-1)
+   {双向链提取\\\scriptsize 以锚点为起点双向扩展\\无向 + Meet-in-the-middle\\（Hub 度数护栏防组合爆炸）};
+\node[data, fill=blue!6, draw=blue!50!black] (chains) at (4.9,-1)
+   {依赖合理链\\\scriptsize 三级判定：因果 $\to$ 信息流 $\to$ 结构};
+\node[sem]    (score) at (6.5,-1) {Transformer 评分\\\scriptsize $A(\chain)$};
+\node[alert]  (alert) at (7.8,-1)
+   {告警合并\\\scriptsize $A(\chain){>}\theta\Rightarrow$ 攻击路径};
 
-\node[phase, above=1mm of offline.north west, xshift=-3mm,
-      text=black!70] {Offline (run once per deployment)};
-\begin{scope}[on background layer]
-  \node[fit=(offline), draw=black!25, dashed, rounded corners=3pt,
-        inner sep=4mm, fill=blue!2] {};
-\end{scope}
+\draw[bflow] (test)    -- (seed);
+\draw[bflow] (seed)    -- (extract);
+\draw[bflow] (extract) -- (chains);
+\draw[rflow] (chains)  -- (score);
+\draw[rflow] (score)   -- (alert);
 
-% ===== ONLINE =====
-\begin{scope}[local bounding box=online, shift={(0,-5.6cm)}]
-\node[data]                    (test) {Test\\Provenance Graph};
-\node[struct, right=of test]   (seed)
-      {Seed Scorer\\\scriptsize TGN, top-5\% edges
-       (\S\ref{sec:seed})};
-\node[struct, right=of seed]   (extract)
-      {Bi-directional\\Chain Extractor\\\scriptsize Alg.~\ref{alg:extract},
-       guided by $\branchCoherence$ (\S\ref{sec:extractor})};
-\node[data,   right=of extract, fill=blue!6, draw=blue!50!black] (dpc)
-      {Dependency-\\Plausible Chains\\\scriptsize $\{\chain_1,\dots,\chain_k\}$};
-
-\node[sem,    below=11mm of extract] (score)
-      {Transformer Scoring\\\scriptsize per-event loss
-       $\to$ eCDF $\to A(\chain)$
-       (\S\ref{sec:detection})};
-\node[alert,  right=of score]        (alert)
-      {Alert \& Merge\\\scriptsize $\mathbb{1}[A(\chain)\!>\!\theta]$
-       $\Rightarrow$ attack path};
-
-\draw[flow] (test)    -- (seed);
-\draw[flow] (seed)    -- (extract);
-\draw[flow] (extract) -- (dpc);
-\draw[flow] (dpc.south)   |- (score.east);
-\draw[flow] (score)       -- (alert);
-\end{scope}
-
-\node[phase, above=1mm of online.north west, xshift=-3mm,
-      text=black!70] {Online (run per test day)};
-\begin{scope}[on background layer]
-  \node[fit=(online), draw=black!25, dashed, rounded corners=3pt,
-        inner sep=4mm, fill=red!2] {};
-\end{scope}
-
-% offline -> online reuse arrows
-\draw[reuse] (phistar.south)  to[out=-90,in=90]
-             ([xshift=-2mm]extract.north);
-\draw[reuse] (modelasset.south) to[out=-90,in=90]
-             ([xshift=2mm]score.north);
-
-% side-labels
-\node[layerlbl, anchor=west] at ([xshift=3mm]dpc.east)
-      {\textcolor{blue!65!black}{\textbf{Structural layer}}\\
-       model-free, $\branchCoherence$};
-\node[layerlbl, anchor=west] at ([xshift=3mm]alert.east)
-      {\textcolor{red!70!black}{\textbf{Semantic layer}}\\
-       learned, $A(\chain)$};
+% ===== 资产复用（结构度量 Φ → 提取；模型 → 评分） ================
+\draw[reuse, draw=blue!65!black]
+   (phi.south) to[out=-90,in=90] (extract.north);
+\draw[reuse, draw=red!70!black]
+   (xfmr.south) to[out=-90,in=90] (score.north);
 
 \end{tikzpicture}%
 }
-\caption{系统架构图。
-\textbf{离线阶段}（上）：从良性审计日志出发，(i) 抽取进程生命周期锚点并执行校准协议，得到结构性度量 $\branchCoherence$；(ii) 在校准好的提取器下抽取良性链，训练自监督 Transformer（并校准逐分量 eCDF 与阈值 $\theta$）。
-\textbf{在线阶段}（下）：对每个测试日，种子识别器标记高损失边作为锚点，由 $\branchCoherence$ 引导双向链提取；得到的依赖合理链经 Transformer 评分得到 $A(\chain)$，$A(\chain){>}\theta$ 的链被合并为攻击路径。
-两层——结构一致性层（蓝色 $\branchCoherence$）与语义异常层（红色 $A$）——自始至终建立在独立的基础之上（\S\ref{sec:design}）。}
+\caption{系统架构图（技术主流程）。上方生成两项可独立复用的资产：
+无监督的\textbf{结构度量} $\branchCoherence$（刻画良性进程生命周期的
+结构模式）与自监督训练的\textbf{语义 Transformer}（学习良性事件的
+因果分布），二者始终保持相互独立、互不依赖。下方为主流程：种子识别
+先标出高损失边作为可疑锚点；\textbf{双向链提取}以锚点为起点同时向前
+向后扩展，通过\textbf{无向 + meet-in-the-middle} 搜索使两侧仅需展开
+约一半跳数即可会合，并以\textbf{Hub 度数护栏}防止在高频中转节点处发生
+组合爆炸；链路连通性按\textbf{三级阶梯}判定——因果方向 $\to$ 信息流
+$\to$ 结构连通（弱证据），复用 $\branchCoherence$ 引导取舍——得到
+依赖合理链；Transformer 复用训练好的模型对链评分为 $A(\chain)$，
+超过阈值 $\theta$ 的链被合并为攻击路径。}
 \label{fig:architecture}
 \end{figure*}
